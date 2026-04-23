@@ -1,8 +1,12 @@
 services:
-  - type: static
+  - type: web
     name: algofin-frontend
-    env: static
+    runtime: static
     plan: free
     buildCommand: npm ci && npm run build
     staticPublishPath: ./build
-    pullRequestPreviewsEnabled: true
+    autoDeploy: true
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
