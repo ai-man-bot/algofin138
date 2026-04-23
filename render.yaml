@@ -2,7 +2,6 @@ services:
   - type: web
     name: algofin-frontend
     runtime: static
-    plan: free
     buildCommand: npm ci && npm run build
     staticPublishPath: ./build
     autoDeploy: true
