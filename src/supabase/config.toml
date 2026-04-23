@@ -1,0 +1,5 @@
+[functions.webhook-receiver]
+verify_jwt = false
+
+[functions.make-server-f118884a]
+verify_jwt = false

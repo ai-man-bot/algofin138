@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#3b82f6">
+  <title>AlgoFin.ai - Offline</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+      color: #ffffff;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 600px;
+      text-align: center;
+      animation: fadeIn 0.5s ease-in;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .icon {
+      width: 120px;
+      height: 120px;
+      margin: 0 auto 30px;
+      background: linear-gradient(135deg, #3b82f6, #06b6d4);
+      border-radius: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 20px 60px rgba(59, 130, 246, 0.3);
+    }
+
+    .icon svg {
+      width: 60px;
+      height: 60px;
+      fill: white;
+    }
+
+    h1 {
+      font-size: 2.5rem;
+      margin-bottom: 20px;
+      background: linear-gradient(135deg, #60a5fa, #06b6d4);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    p {
+      font-size: 1.125rem;
+      color: #cbd5e1;
+      line-height: 1.6;
+      margin-bottom: 30px;
+    }
+
+    .status {
+      background: rgba(59, 130, 246, 0.1);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 30px;
+    }
+
+    .status-item {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      font-size: 1rem;
+      color: #94a3b8;
+      margin-bottom: 10px;
+    }
+
+    .status-item:last-child {
+      margin-bottom: 0;
+    }
+
+    .status-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #f43f5e;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% {
+        opacity: 1;
+      }
+      50% {
+        opacity: 0.5;
+      }
+    }
+
+    .button {
+      display: inline-block;
+      padding: 14px 32px;
+      background: linear-gradient(135deg, #3b82f6, #2563eb);
+      color: white;
+      text-decoration: none;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 1rem;
+      transition: transform 0.2s, box-shadow 0.2s;
+      box-shadow: 0 4px 20px rgba(59, 130, 246, 0.4);
+    }
+
+    .button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 30px rgba(59, 130, 246, 0.6);
+    }
+
+    .button:active {
+      transform: translateY(0);
+    }
+
+    .tips {
+      margin-top: 40px;
+      padding-top: 30px;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .tips h3 {
+      font-size: 1.25rem;
+      margin-bottom: 15px;
+      color: #e2e8f0;
+    }
+
+    .tips ul {
+      text-align: left;
+      list-style: none;
+      color: #94a3b8;
+      line-height: 2;
+    }
+
+    .tips li:before {
+      content: "→ ";
+      color: #3b82f6;
+      font-weight: bold;
+      margin-right: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 5.636a9 9 0 010 12.728m0 0l-2.829-2.829m2.829 2.829L21 21M15.536 8.464a5 5 0 010 7.072m0 0l-2.829-2.829m-4.243 2.829a4.978 4.978 0 01-1.414-2.83m-1.414 5.658a9 9 0 01-2.167-9.238m7.824 2.167a1 1 0 111.414 1.414m-1.414-1.414L3 3" />
+      </svg>
+    </div>
+
+    <h1>You're Offline</h1>
+    
+    <p>AlgoFin.ai requires an internet connection to access real-time trading data and execute trades.</p>
+
+    <div class="status">
+      <div class="status-item">
+        <span class="status-dot"></span>
+        <span>No Internet Connection</span>
+      </div>
+      <div class="status-item">
+        <span>⏰ Checking automatically...</span>
+      </div>
+    </div>
+
+    <a href="/" class="button" onclick="window.location.reload(); return false;">
+      Try Again
+    </a>
+
+    <div class="tips">
+      <h3>Quick Tips</h3>
+      <ul>
+        <li>Check your WiFi or mobile data connection</li>
+        <li>Make sure you're not in airplane mode</li>
+        <li>Try refreshing the page once you're back online</li>
+        <li>Previously loaded data may still be visible in cache</li>
+      </ul>
+    </div>
+  </div>
+
+  <script>
+    // Auto-reload when connection is restored
+    window.addEventListener('online', () => {
+      console.log('Connection restored! Reloading...');
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
+    });
+
+    // Check connection periodically
+    let retryCount = 0;
+    const maxRetries = 10;
+    
+    const checkConnection = setInterval(() => {
+      retryCount++;
+      
+      if (navigator.onLine) {
+        console.log('Navigator reports online - attempting reload');
+        clearInterval(checkConnection);
+        window.location.reload();
+      }
+      
+      if (retryCount >= maxRetries) {
+        console.log('Max retries reached, stopping automatic checks');
+        clearInterval(checkConnection);
+      }
+    }, 5000); // Check every 5 seconds
+
+    // Show connection status
+    console.log('AlgoFin.ai - Offline Mode');
+    console.log('Connection Status:', navigator.onLine ? 'Online' : 'Offline');
+  </script>
+</body>
+</html>

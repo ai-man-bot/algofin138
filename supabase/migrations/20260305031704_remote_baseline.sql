@@ -1,0 +1,5 @@
+-- Baseline migration placeholder to match the existing remote Supabase
+-- migration history for project mligzafrdckazvagqeht.
+--
+-- This file is intentionally a no-op so that local migration history aligns
+-- with the remote project before applying new migrations from this repo.

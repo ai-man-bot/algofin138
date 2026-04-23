@@ -1,0 +1,39 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="512" height="512" rx="100" fill="#0f172a"/>
+  
+  <!-- Electric Blue Gradient Circle -->
+  <circle cx="256" cy="200" r="80" fill="url(#gradient1)"/>
+  
+  <!-- Chart Line Pattern -->
+  <path d="M100 350 L150 320 L200 280 L250 300 L300 240 L350 260 L400 200" 
+        stroke="#10b981" 
+        stroke-width="8" 
+        stroke-linecap="round" 
+        stroke-linejoin="round" 
+        fill="none"/>
+  
+  <!-- Candlestick -->
+  <rect x="120" y="300" width="20" height="60" fill="#f43f5e" rx="4"/>
+  <rect x="170" y="280" width="20" height="80" fill="#10b981" rx="4"/>
+  <rect x="220" y="260" width="20" height="60" fill="#10b981" rx="4"/>
+  <rect x="270" y="290" width="20" height="70" fill="#f43f5e" rx="4"/>
+  <rect x="320" y="230" width="20" height="90" fill="#10b981" rx="4"/>
+  <rect x="370" y="250" width="20" height="70" fill="#10b981" rx="4"/>
+  
+  <!-- "A" Letter -->
+  <text x="256" y="460" 
+        font-family="Arial, sans-serif" 
+        font-size="140" 
+        font-weight="bold" 
+        fill="#3b82f6" 
+        text-anchor="middle">A</text>
+  
+  <!-- Gradients -->
+  <defs>
+    <linearGradient id="gradient1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3b82f6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#06b6d4;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+</svg>
