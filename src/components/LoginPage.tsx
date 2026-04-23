@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Mail, Lock, Chrome } from './CustomIcons';
-import { authAPI, setAccessToken } from '../utils/api';
+import { setAccessToken } from '../utils/api';
 import { createClient } from '@supabase/supabase-js';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 
@@ -19,7 +19,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
   const [successMessage, setSuccessMessage] = useState('');
 
   // Clear any old sessions on mount
-  useState(() => {
+  useEffect(() => {
     const session = localStorage.getItem('algofinSession');
     if (session) {
       try {
@@ -34,7 +34,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
         localStorage.removeItem('algofinSession');
       }
     }
-  });
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,23 +42,57 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     setLoading(true);
 
     try {
+      const supabaseUrl = `https://${projectId}.supabase.co`;
+      const supabase = createClient(supabaseUrl, publicAnonKey);
+
       if (isSignUp) {
-        // Sign up new user via backend
-        await authAPI.signup(email, password, name);
-        
-        // Then sign in and call onLogin
-        const response = await authAPI.login(email, password);
-        if (response.access_token) {
-          setAccessToken(response.access_token);
-          onLogin(email, name, response.access_token);
+        // Sign up directly with Supabase Auth (avoids edge-function auth dependency)
+        const { error: signUpError } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: { name },
+            emailRedirectTo: window.location.origin,
+          },
+        });
+
+        if (signUpError) {
+          throw signUpError;
         }
+
+        // Sign in immediately to establish app session
+        const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+
+        if (loginError || !loginData.session) {
+          throw loginError || new Error('No session created after signup');
+        }
+
+        setAccessToken(loginData.session.access_token);
+        onLogin(
+          loginData.user?.email || email,
+          loginData.user?.user_metadata?.name || name || email.split('@')[0],
+          loginData.session.access_token
+        );
       } else {
-        // Sign in existing user via backend
-        const response = await authAPI.login(email, password);
-        if (response.access_token) {
-          setAccessToken(response.access_token);
-          onLogin(email, response.user?.user_metadata?.name || email.split('@')[0], response.access_token);
+        // Sign in existing user directly with Supabase Auth
+        const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+
+        if (loginError || !loginData.session) {
+          throw loginError || new Error('No active session');
         }
+
+        setAccessToken(loginData.session.access_token);
+        onLogin(
+          loginData.user?.email || email,
+          loginData.user?.user_metadata?.name || email.split('@')[0],
+          loginData.session.access_token
+        );
       }
     } catch (err: any) {
       console.error('Authentication error:', err);
