@@ -1,10 +1,43 @@
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+
 interface DataPoint {
   date: string;
   value: number;
+  timestamp?: number;
 }
 
 interface CustomAreaChartProps {
   data: DataPoint[];
+}
+
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function formatCompactCurrency(value: number) {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
+function formatDateLabel(timestamp?: number, fallbackDate?: string) {
+  if (!timestamp) return fallbackDate ?? '';
+  return new Date(timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 export function CustomAreaChart({ data }: CustomAreaChartProps) {
@@ -16,126 +49,71 @@ export function CustomAreaChart({ data }: CustomAreaChartProps) {
     );
   }
 
-  const width = 100;
-  const height = 100;
-  const padding = { top: 10, right: 10, bottom: 20, left: 50 };
-  
-  const values = data.map(d => d.value);
+  const sortedData = [...data].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+  const values = sortedData.map((point) => point.value);
   const min = Math.min(...values);
   const max = Math.max(...values);
-  const range = max - min || 1;
-  
-  // Create path for the line
-  const linePath = data.map((point, index) => {
-    const x = padding.left + (index / (data.length - 1)) * (width - padding.left - padding.right);
-    const y = height - padding.bottom - ((point.value - min) / range) * (height - padding.top - padding.bottom);
-    return `${index === 0 ? 'M' : 'L'} ${x} ${y}`;
-  }).join(' ');
-  
-  // Create path for the filled area
-  const areaPath = linePath + 
-    ` L ${padding.left + (width - padding.left - padding.right)} ${height - padding.bottom}` +
-    ` L ${padding.left} ${height - padding.bottom} Z`;
-  
-  // Calculate Y axis ticks
-  const yTicks = [min, (min + max) / 2, max];
-  
+  const padding = Math.max((max - min) * 0.12, max * 0.0025, 25);
+
   return (
-    <div className="h-full w-full m-[0px] p-[0px] bg-[rgba(10,251,134,0)] rounded-[5px]">
-      <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full">
-        <defs>
-          <linearGradient id="areaGradient" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
-            <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-          </linearGradient>
-        </defs>
-        
-        {/* Grid lines */}
-        {yTicks.map((tick, i) => {
-          const y = height - padding.bottom - ((tick - min) / range) * (height - padding.top - padding.bottom);
-          return (
-            <g key={i}>
-              <line
-                x1={padding.left}
-                y1={y}
-                x2={width - padding.right}
-                y2={y}
-                stroke="#334155"
-                strokeWidth="0.5"
-                strokeDasharray="3 3"
-                opacity="0.2"
-              />
-            </g>
-          );
-        })}
-        
-        {/* Y axis labels */}
-        {yTicks.map((tick, i) => {
-          const y = height - padding.bottom - ((tick - min) / range) * (height - padding.top - padding.bottom);
-          return (
-            <text
-              key={i}
-              x={padding.left - 5}
-              y={y}
-              fill="#64748b"
-              fontSize="3"
-              textAnchor="end"
-              dominantBaseline="middle"
-            >
-              ${(tick / 1000).toFixed(0)}k
-            </text>
-          );
-        })}
-        
-        {/* X axis labels */}
-        {data.map((point, index) => {
-          if (index % Math.ceil(data.length / 5) !== 0 && index !== data.length - 1) return null;
-          const x = padding.left + (index / (data.length - 1)) * (width - padding.left - padding.right);
-          return (
-            <text
-              key={index}
-              x={x}
-              y={height - padding.bottom + 5}
-              fill="#64748b"
-              fontSize="3"
-              textAnchor="middle"
-            >
-              {point.date}
-            </text>
-          );
-        })}
-        
-        {/* Area fill */}
-        <path
-          d={areaPath}
-          fill="url(#areaGradient)"
-        />
-        
-        {/* Line */}
-        <path
-          d={linePath}
-          fill="none"
-          stroke="#3b82f6"
-          strokeWidth="0.5"
-        />
-        
-        {/* Data points */}
-        {data.map((point, index) => {
-          const x = padding.left + (index / (data.length - 1)) * (width - padding.left - padding.right);
-          const y = height - padding.bottom - ((point.value - min) / range) * (height - padding.top - padding.bottom);
-          return (
-            <g key={index}>
-              <circle
-                cx={x}
-                cy={y}
-                r="1"
-                fill="#3b82f6"
-              />
-              <title>{point.date}: ${point.value.toLocaleString()}</title>
-            </g>
-          );
-        })}
-      </svg>
+    <div className="h-full w-full px-4 pb-4 pt-2">
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={sortedData} margin={{ top: 16, right: 16, left: 8, bottom: 8 }}>
+          <defs>
+            <linearGradient id="equityGradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#4f7dff" stopOpacity={0.35} />
+              <stop offset="75%" stopColor="#4f7dff" stopOpacity={0.08} />
+              <stop offset="100%" stopColor="#4f7dff" stopOpacity={0} />
+            </linearGradient>
+          </defs>
+
+          <CartesianGrid stroke="#334155" strokeDasharray="4 6" opacity={0.25} vertical={false} />
+          <XAxis
+            dataKey="timestamp"
+            tick={{ fill: '#94a3b8', fontSize: 12 }}
+            axisLine={false}
+            tickLine={false}
+            minTickGap={28}
+            tickFormatter={(value) => formatDateLabel(value)}
+          />
+          <YAxis
+            domain={[Math.max(0, min - padding), max + padding]}
+            tick={{ fill: '#94a3b8', fontSize: 12 }}
+            axisLine={false}
+            tickLine={false}
+            width={82}
+            tickFormatter={(value) => formatCompactCurrency(value)}
+          />
+          <Tooltip
+            cursor={{ stroke: '#4f7dff', strokeOpacity: 0.4, strokeDasharray: '4 4' }}
+            contentStyle={{
+              background: '#0f172a',
+              border: '1px solid #334155',
+              borderRadius: '10px',
+              color: '#e2e8f0',
+            }}
+            formatter={(value: number) => [formatCurrency(value), 'Equity']}
+            labelFormatter={(label: number) =>
+              new Date(label).toLocaleDateString('en-US', {
+                weekday: 'short',
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric',
+              })
+            }
+          />
+          <Area
+            type="monotone"
+            dataKey="value"
+            stroke="#5b8cff"
+            strokeWidth={2.5}
+            fill="url(#equityGradient)"
+            activeDot={{ r: 5, fill: '#5b8cff', stroke: '#0f172a', strokeWidth: 2 }}
+            dot={false}
+            isAnimationActive={false}
+          />
+        </AreaChart>
+      </ResponsiveContainer>
     </div>
   );
 }

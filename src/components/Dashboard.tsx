@@ -9,6 +9,85 @@ interface DashboardProps {
   setSelectedBrokerId: (id: string) => void;
 }
 
+type EquityTimeframe = '1M' | '3M' | '6M' | '1Y' | 'ALL';
+
+interface EquityDataPoint {
+  date: string;
+  value: number;
+  timestamp: number;
+}
+
+function toDateInputValue(date: Date) {
+  return date.toISOString().split('T')[0];
+}
+
+function getEquityHistoryParams(timeframe: EquityTimeframe) {
+  const endDate = new Date();
+  const startDate = new Date(endDate);
+
+  if (timeframe === '1M') startDate.setDate(startDate.getDate() - 30);
+  if (timeframe === '3M') startDate.setDate(startDate.getDate() - 90);
+  if (timeframe === '6M') startDate.setDate(startDate.getDate() - 180);
+  if (timeframe === '1Y') startDate.setFullYear(startDate.getFullYear() - 1);
+  if (timeframe === 'ALL') startDate.setFullYear(startDate.getFullYear() - 5);
+
+  return {
+    timeframe: '1D',
+    startDate: toDateInputValue(startDate),
+    endDate: toDateInputValue(endDate),
+  };
+}
+
+function buildFallbackEquitySeries(equity: number): EquityDataPoint[] {
+  const today = new Date();
+  return Array.from({ length: 7 }).map((_, idx) => {
+    const date = new Date(today);
+    date.setDate(today.getDate() - (6 - idx));
+    return {
+      timestamp: date.getTime(),
+      date: `${date.getMonth() + 1}/${date.getDate()}`,
+      value: equity,
+    };
+  });
+}
+
+function summarizeEquity(data: EquityDataPoint[]) {
+  if (!data.length) {
+    return { latest: 0, change: 0, changePercent: 0 };
+  }
+
+  const first = data[0].value;
+  const latest = data[data.length - 1].value;
+  const change = latest - first;
+  const changePercent = first !== 0 ? (change / first) * 100 : 0;
+
+  return { latest, change, changePercent };
+}
+
+function normalizeEquityData(raw: any[]): EquityDataPoint[] {
+  if (!Array.isArray(raw)) return [];
+
+  return raw
+    .map((item: any, idx: number) => {
+      const numericValue = Number(item?.value ?? item?.equity ?? item?.close ?? 0);
+      const timestamp =
+        typeof item?.timestamp === 'number'
+          ? item.timestamp
+          : item?.date
+            ? new Date(item.date).getTime()
+            : Date.now() - (raw.length - idx) * 24 * 60 * 60 * 1000;
+
+      const pointDate = new Date(timestamp);
+      return {
+        timestamp,
+        date: `${pointDate.getMonth() + 1}/${pointDate.getDate()}`,
+        value: numericValue,
+      };
+    })
+    .filter((point: EquityDataPoint) => Number.isFinite(point.value))
+    .sort((a, b) => a.timestamp - b.timestamp);
+}
+
 export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }: DashboardProps) {
   const [metrics, setMetrics] = useState({
     totalEquity: 0,
@@ -17,16 +96,17 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
     dayChangePercent: 0,
     activeAlerts: 0,
   });
-  const [equityData, setEquityData] = useState<any[]>([]);
+  const [equityData, setEquityData] = useState<EquityDataPoint[]>([]);
   const [positions, setPositions] = useState<any[]>([]);
   const [recentOrders, setRecentOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasBrokerConnected, setHasBrokerConnected] = useState(false);
   const [connectedBrokers, setConnectedBrokers] = useState<any[]>([]);
+  const [selectedTimeframe, setSelectedTimeframe] = useState<EquityTimeframe>('1M');
 
   useEffect(() => {
     loadDashboardData();
-  }, [selectedBrokerId]);
+  }, [selectedBrokerId, selectedTimeframe]);
 
   // Helper function to check if a broker is an Alpaca account
   const isAlpacaBroker = (broker: any) => {
@@ -62,7 +142,16 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
           const [accountData, positionsData, portfolioHistory, ordersData] = await Promise.all([
             alpacaAPI.getAccount(selectedBrokerId),
             alpacaAPI.getPositions(selectedBrokerId),
-            alpacaAPI.getPortfolioHistory(selectedBrokerId),
+            (() => {
+              const params = getEquityHistoryParams(selectedTimeframe);
+              return alpacaAPI.getPortfolioHistory(
+                selectedBrokerId,
+                undefined,
+                params.timeframe,
+                params.startDate,
+                params.endDate
+              );
+            })(),
             alpacaAPI.getOrders(selectedBrokerId, 'all', 10), // Get last 10 orders
           ]);
           
@@ -123,24 +212,20 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
           }
           
           // Transform portfolio history for equity curve
-          if (portfolioHistory && portfolioHistory.timestamp && portfolioHistory.equity) {
+          if (portfolioHistory && portfolioHistory.timestamp && portfolioHistory.equity && portfolioHistory.equity.length > 0) {
             const chartData = portfolioHistory.timestamp.map((ts: number, idx: number) => {
               const date = new Date(ts * 1000);
               return {
+                timestamp: date.getTime(),
                 date: `${date.getMonth() + 1}/${date.getDate()}`,
                 value: portfolioHistory.equity[idx],
               };
-            });
+            }).filter((point: EquityDataPoint) => Number.isFinite(point.value));
+
             setEquityData(chartData);
           } else {
-            // Use default equity curve if no history available
-            setEquityData([
-              { date: '11/1', value: equity * 0.95 },
-              { date: '11/8', value: equity * 0.97 },
-              { date: '11/15', value: equity * 0.96 },
-              { date: '11/22', value: equity * 0.98 },
-              { date: '11/29', value: equity },
-            ]);
+            // Graceful fallback when broker has no historical points for selected timeframe
+            setEquityData(buildFallbackEquitySeries(equity));
           }
           setHasBrokerConnected(true);
         } catch (alpacaError) {
@@ -176,7 +261,7 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
         dayChangePercent: 0,
         activeAlerts: 0,
       });
-      setEquityData(equityCurveData || []);
+      setEquityData(normalizeEquityData(equityCurveData || []));
       setPositions(positionsData || []);
       setRecentOrders(recentOrdersData || []);
       setHasBrokerConnected(false);
@@ -204,6 +289,9 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
       </div>
     );
   }
+
+  const equitySummary = summarizeEquity(equityData);
+  const timeframeOptions: EquityTimeframe[] = ['1M', '3M', '6M', '1Y', 'ALL'];
 
   return (
     <div className="min-h-screen bg-[#0f172a] mx-auto max-w-[1600px] px-6 py-8">
@@ -302,24 +390,26 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="mb-1 text-slate-100">Account Equity</h3>
-                <p className="text-sm text-slate-400">Portfolio value over time</p>
+                <p className="text-sm text-slate-400">
+                  {equitySummary.latest > 0
+                    ? `${selectedTimeframe} change: ${equitySummary.change >= 0 ? '+' : ''}$${Math.abs(equitySummary.change).toLocaleString('en-US', { maximumFractionDigits: 2 })} (${equitySummary.changePercent >= 0 ? '+' : ''}${equitySummary.changePercent.toFixed(2)}%)`
+                    : 'Portfolio value over time'}
+                </p>
               </div>
               <div className="flex gap-2">
-                <button className="rounded-lg bg-blue-500 px-3 py-1.5 text-xs transition-colors hover:bg-blue-600">
-                  1M
-                </button>
-                <button className="rounded-lg bg-slate-800/50 px-3 py-1.5 text-xs text-slate-400 transition-colors hover:bg-slate-800">
-                  3M
-                </button>
-                <button className="rounded-lg bg-slate-800/50 px-3 py-1.5 text-xs text-slate-400 transition-colors hover:bg-slate-800">
-                  6M
-                </button>
-                <button className="rounded-lg bg-slate-800/50 px-3 py-1.5 text-xs text-slate-400 transition-colors hover:bg-slate-800">
-                  1Y
-                </button>
-                <button className="rounded-lg bg-slate-800/50 px-3 py-1.5 text-xs text-slate-400 transition-colors hover:bg-slate-800">
-                  ALL
-                </button>
+                {timeframeOptions.map((timeframe) => (
+                  <button
+                    key={timeframe}
+                    onClick={() => setSelectedTimeframe(timeframe)}
+                    className={`rounded-lg px-3 py-1.5 text-xs transition-colors ${
+                      selectedTimeframe === timeframe
+                        ? 'bg-blue-500 text-white hover:bg-blue-600'
+                        : 'bg-slate-800/50 text-slate-400 hover:bg-slate-800'
+                    }`}
+                  >
+                    {timeframe}
+                  </button>
+                ))}
               </div>
             </div>
           </div>
