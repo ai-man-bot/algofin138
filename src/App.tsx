@@ -11,6 +11,7 @@ import './utils/pwaCheck'; // Import PWA health check (exposes checkPWAHealth() 
 import './utils/debugUtils'; // Import debug utilities (exposes debugAlgoFin in console)
 
 type Screen = 'login' | 'reset-password' | 'dashboard' | 'trades' | 'brokers' | 'strategy' | 'webhooks' | 'notifications' | 'account' | 'webhook-debug' | 'analytics' | 'performance';
+const authenticatedScreens: Screen[] = ['dashboard', 'strategy', 'trades', 'analytics', 'performance', 'webhooks', 'brokers', 'notifications', 'account', 'webhook-debug'];
 
 const Dashboard = lazy(() => import('./components/Dashboard').then((module) => ({ default: module.Dashboard })));
 const TradesTab = lazy(() => import('./components/TradesTab').then((module) => ({ default: module.TradesTab })));
@@ -29,6 +30,7 @@ export default function App() {
   const [userEmail, setUserEmail] = useState('');
   const [userName, setUserName] = useState('');
   const [selectedBrokerId, setSelectedBrokerId] = useState<string>(''); // Shared broker account state
+  const [visitedScreens, setVisitedScreens] = useState<Screen[]>(['dashboard']);
   const screenFallback = <div className="px-6 py-10 text-sm text-slate-400">Loading screen...</div>;
 
   // Initialize PWA on mount
@@ -70,6 +72,21 @@ export default function App() {
     window.addEventListener('hashchange', checkForPasswordReset);
     return () => window.removeEventListener('hashchange', checkForPasswordReset);
   }, []);
+
+  useEffect(() => {
+    if (!isLoggedIn) {
+      setVisitedScreens(['dashboard']);
+      return;
+    }
+
+    if (!authenticatedScreens.includes(currentScreen)) {
+      return;
+    }
+
+    setVisitedScreens((screens) => (
+      screens.includes(currentScreen) ? screens : [...screens, currentScreen]
+    ));
+  }, [currentScreen, isLoggedIn]);
 
   const checkSession = async () => {
     // Create Supabase client
@@ -212,6 +229,7 @@ export default function App() {
     setUserName(name);
     setAccessToken(token || '');
     setIsLoggedIn(true);
+    setVisitedScreens(['dashboard']);
     setCurrentScreen('dashboard');
   };
 
@@ -228,6 +246,7 @@ export default function App() {
     setIsLoggedIn(false);
     setUserEmail('');
     setUserName('');
+    setVisitedScreens(['dashboard']);
     setCurrentScreen('login');
     clearAccessToken();
     
@@ -248,6 +267,33 @@ export default function App() {
   if (!isLoggedIn) {
     return <LoginPage onLogin={handleLogin} />;
   }
+
+  const renderScreen = (screen: Screen) => {
+    switch (screen) {
+      case 'dashboard':
+        return <Dashboard onNavigate={setCurrentScreen} selectedBrokerId={selectedBrokerId} setSelectedBrokerId={setSelectedBrokerId} />;
+      case 'strategy':
+        return <StrategyPage onNavigate={setCurrentScreen} />;
+      case 'trades':
+        return <TradesTab selectedBrokerId={selectedBrokerId} setSelectedBrokerId={setSelectedBrokerId} />;
+      case 'analytics':
+        return <AnalyticsPage />;
+      case 'performance':
+        return <PerformanceAnalyticsPage />;
+      case 'webhooks':
+        return <WebhooksPage />;
+      case 'brokers':
+        return <BrokersPage />;
+      case 'notifications':
+        return <NotificationsPage />;
+      case 'account':
+        return <AccountPage userName={userName} userEmail={userEmail} onLogout={handleLogout} />;
+      case 'webhook-debug':
+        return <WebhookDebugPage />;
+      default:
+        return null;
+    }
+  };
 
   return (
     <div className="min-h-screen bg-[#0f172a] text-white">
@@ -367,16 +413,15 @@ export default function App() {
       {/* Main Content */}
       <main>
         <Suspense fallback={screenFallback}>
-          {currentScreen === 'dashboard' && <Dashboard onNavigate={setCurrentScreen} selectedBrokerId={selectedBrokerId} setSelectedBrokerId={setSelectedBrokerId} />}
-          {currentScreen === 'strategy' && <StrategyPage onNavigate={setCurrentScreen} />}
-          {currentScreen === 'trades' && <TradesTab selectedBrokerId={selectedBrokerId} setSelectedBrokerId={setSelectedBrokerId} />}
-          {currentScreen === 'analytics' && <AnalyticsPage />}
-          {currentScreen === 'performance' && <PerformanceAnalyticsPage />}
-          {currentScreen === 'webhooks' && <WebhooksPage />}
-          {currentScreen === 'brokers' && <BrokersPage />}
-          {currentScreen === 'notifications' && <NotificationsPage />}
-          {currentScreen === 'account' && <AccountPage userName={userName} userEmail={userEmail} onLogout={handleLogout} />}
-          {currentScreen === 'webhook-debug' && <WebhookDebugPage />}
+          {visitedScreens.map((screen) => (
+            <div
+              key={screen}
+              className={currentScreen === screen ? 'block' : 'hidden'}
+              aria-hidden={currentScreen !== screen}
+            >
+              {renderScreen(screen)}
+            </div>
+          ))}
         </Suspense>
       </main>
       

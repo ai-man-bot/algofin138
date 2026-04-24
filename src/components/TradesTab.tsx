@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
-import { alpacaAPI, brokersAPI } from '../utils/api';
-import { projectId } from '../utils/supabase/info';
+import { alpacaAPI, brokersAPI, webhooksAPI } from '../utils/api';
 import { NewOpenTradesTable, OrdersTable } from './NewTables';
 import { calculatePerformanceMetricsFromPairs, createTradingPairs } from '../utils/tradeAnalytics';
 
@@ -196,31 +195,17 @@ export function TradesTab({ selectedBrokerId, setSelectedBrokerId }: TradesTabPr
       }
       
       // Fetch webhook events
-      const token = localStorage.getItem('access_token');
       let webhookEventsData = [];
-      if (token) {
-        try {
-          const eventsResponse = await fetch(
-            `https://${projectId}.supabase.co/functions/v1/make-server-f118884a/webhooks/all/events`,
-            {
-              headers: {
-                Authorization: `Bearer ${token}`,
-              },
-            }
-          );
-          if (eventsResponse.ok) {
-            webhookEventsData = await eventsResponse.json();
-            console.log('✅ Loaded webhook events:', webhookEventsData.length);
-            console.log('📊 Event data:', webhookEventsData);
-          } else {
-            console.error('❌ Failed to fetch webhook events:', eventsResponse.status, await eventsResponse.text());
-          }
-        } catch (error) {
-          console.error('Error loading webhook events:', error);
-        }
+      try {
+        const eventsData = await webhooksAPI.getEvents('all');
+        webhookEventsData = Array.isArray(eventsData) ? eventsData : [];
+        console.log('Loaded webhook events:', webhookEventsData.length);
+        console.log('Event data:', webhookEventsData);
+      } catch (error) {
+        console.error('Error loading webhook events:', error);
       }
-      console.log('📊 TradesTab: Loaded webhook events:', webhookEventsData.length);
-      console.log('📊 TradesTab: First few events:', webhookEventsData.slice(0, 3));
+      console.log('TradesTab: Loaded webhook events:', webhookEventsData.length);
+      console.log('TradesTab: First few events:', webhookEventsData.slice(0, 3));
       setWebhookEvents(webhookEventsData);
       
       // Find the selected broker
@@ -541,44 +526,18 @@ export function TradesTab({ selectedBrokerId, setSelectedBrokerId }: TradesTabPr
   const backfillWebhookEvents = async () => {
     try {
       setBackfilling(true);
-      const token = localStorage.getItem('access_token');
-      if (!token) return;
-      
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-f118884a/backfill-webhook-events`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
-      
-      if (response.ok) {
-        const result = await response.json();
-        console.log('Backfill result:', result);
-        // Reload data to show new webhook events
-        await loadData();
-        alert(`✅ ${result.message || 'Backfill complete'}`);
-      } else {
-        console.error('Backfill failed');
-        alert('❌ Failed to backfill webhook events');
-      }
+      const result = await webhooksAPI.backfillEvents();
+      console.log('Backfill result:', result);
+      // Reload data to show new webhook events
+      await loadData();
+      alert(`Backfill complete: ${result.message || 'Done'}`);
     } catch (error) {
       console.error('Error backfilling:', error);
-      alert('❌ Error during backfill');
+      alert('Error during backfill');
     } finally {
       setBackfilling(false);
     }
   };
-
-  if (loading) {
-    return (
-      <div className="p-6 flex items-center justify-center min-h-[60vh]">
-        <div className="text-slate-400">Loading trades...</div>
-      </div>
-    );
-  }
 
   if (!alpacaConnected) {
     return (

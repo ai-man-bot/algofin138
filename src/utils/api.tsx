@@ -1,7 +1,9 @@
 import { publicAnonKey } from './supabase/info';
 import { functionBaseUrl } from './supabaseUrls';
+import { requestCache } from './requestCache';
 
 export const API_BASE = functionBaseUrl;
+const DEFAULT_CACHE_TTL_MS = 15_000;
 
 // Store access token in memory
 let accessToken: string | null = null;
@@ -14,7 +16,11 @@ export function setAuthErrorCallback(callback: () => void) {
 }
 
 export function setAccessToken(token: string | null) {
+  const previousToken = accessToken;
   accessToken = token;
+  if (previousToken !== token) {
+    requestCache.clear();
+  }
   // Also store in localStorage for persistence
   if (token) {
     localStorage.setItem('access_token', token);
@@ -36,18 +42,20 @@ export function getAccessToken() {
 export function clearAccessToken() {
   accessToken = null;
   localStorage.removeItem('access_token');
+  requestCache.clear();
   console.log('Access token cleared from memory and localStorage');
 }
 
-async function fetchAPI(endpoint: string, options: RequestInit = {}) {
+function buildCacheKey(endpoint: string, method: string) {
+  return `${method}:${endpoint}`;
+}
+
+async function fetchJSON(endpoint: string, options: RequestInit, tokenToUse: string) {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...options.headers as Record<string, string>,
   };
 
-  // Use getAccessToken() to check both memory and localStorage
-  const currentToken = getAccessToken();
-  const tokenToUse = currentToken || publicAnonKey;
   headers['Authorization'] = `Bearer ${tokenToUse}`;
   
   console.log(`API ${options.method || 'GET'} ${endpoint}`);
@@ -78,6 +86,30 @@ async function fetchAPI(endpoint: string, options: RequestInit = {}) {
   }
 
   return response.json();
+}
+
+async function fetchAPI(
+  endpoint: string,
+  options: RequestInit & { cacheTtlMs?: number; forceRefresh?: boolean } = {},
+) {
+  const currentToken = getAccessToken();
+  const tokenToUse = currentToken || publicAnonKey;
+  const method = (options.method || 'GET').toUpperCase();
+
+  if (method === 'GET') {
+    return requestCache.load(
+      buildCacheKey(endpoint, method),
+      () => fetchJSON(endpoint, { ...options, method }, tokenToUse),
+      {
+        ttlMs: options.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS,
+        forceRefresh: options.forceRefresh,
+      },
+    );
+  }
+
+  const result = await fetchJSON(endpoint, { ...options, method }, tokenToUse);
+  requestCache.clear();
+  return result;
 }
 
 // Auth API
@@ -160,6 +192,10 @@ export const webhooksAPI = {
       body: JSON.stringify(webhook),
     }),
   getEvents: (id: string) => fetchAPI(`/webhooks/${id}/events`),
+  backfillEvents: () =>
+    fetchAPI('/backfill-webhook-events', {
+      method: 'POST',
+    }),
   delete: (id: string) =>
     fetchAPI(`/webhooks/${id}`, {
       method: 'DELETE',
@@ -169,6 +205,12 @@ export const webhooksAPI = {
 // Notifications API
 export const notificationsAPI = {
   getAll: () => fetchAPI('/notifications'),
+  getSettings: () => fetchAPI('/notification-settings'),
+  saveSettings: (settings: any) =>
+    fetchAPI('/notification-settings', {
+      method: 'POST',
+      body: JSON.stringify(settings),
+    }),
   create: (notification: any) =>
     fetchAPI('/notifications', {
       method: 'POST',
@@ -176,7 +218,15 @@ export const notificationsAPI = {
     }),
   markAsRead: (id: string) =>
     fetchAPI(`/notifications/${id}/read`, {
-      method: 'PUT',
+      method: 'PATCH',
+    }),
+  markAllAsRead: () =>
+    fetchAPI('/notifications/mark-all-read', {
+      method: 'POST',
+    }),
+  delete: (id: string) =>
+    fetchAPI(`/notifications/${id}`, {
+      method: 'DELETE',
     }),
   getPreferences: () => fetchAPI('/notifications/preferences'),
   updatePreferences: (preferences: any) =>

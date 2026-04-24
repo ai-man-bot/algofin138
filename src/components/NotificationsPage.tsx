@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Bell, Mail, MessageSquare, Smartphone, Check, AlertTriangle, TrendingUp, TrendingDown, DollarSign, X, RefreshCw } from './CustomIcons';
-import { projectId, publicAnonKey } from '../utils/supabase/info';
+import { notificationsAPI } from '../utils/api';
 
 interface Notification {
   id: string;
@@ -82,22 +82,8 @@ export function NotificationsPage() {
 
   const loadNotifications = async () => {
     try {
-      const token = localStorage.getItem('access_token');
-      if (!token) return;
-
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-f118884a/notifications`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
-
-      if (response.ok) {
-        const data = await response.json();
-        setNotifications(data);
-      }
+      const data = await notificationsAPI.getAll();
+      setNotifications(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Error loading notifications:', error);
     } finally {
@@ -107,20 +93,8 @@ export function NotificationsPage() {
 
   const loadSettings = async () => {
     try {
-      const token = localStorage.getItem('access_token');
-      if (!token) return;
-
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-f118884a/notification-settings`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
-
-      if (response.ok) {
-        const data = await response.json();
+      const data = await notificationsAPI.getSettings();
+      if (data) {
         setSettings(data);
       }
     } catch (error) {
@@ -133,24 +107,8 @@ export function NotificationsPage() {
     
     try {
       setSavingSettings(true);
-      const token = localStorage.getItem('access_token');
-      if (!token) return;
-
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-f118884a/notification-settings`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(settingsToSave),
-        }
-      );
-
-      if (response.ok) {
-        console.log('Settings saved successfully');
-      }
+      await notificationsAPI.saveSettings(settingsToSave);
+      console.log('Settings saved successfully');
     } catch (error) {
       console.error('Error saving settings:', error);
     } finally {
@@ -160,24 +118,10 @@ export function NotificationsPage() {
 
   const markAsRead = async (notificationId: string) => {
     try {
-      const token = localStorage.getItem('access_token');
-      if (!token) return;
-
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-f118884a/notifications/${notificationId}/read`,
-        {
-          method: 'PATCH',
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
-
-      if (response.ok) {
-        setNotifications(notifications.map(n => 
-          n.id === notificationId ? { ...n, read: true } : n
-        ));
-      }
+      await notificationsAPI.markAsRead(notificationId);
+      setNotifications((current) => current.map((notification) =>
+        notification.id === notificationId ? { ...notification, read: true } : notification
+      ));
     } catch (error) {
       console.error('Error marking notification as read:', error);
     }
@@ -185,22 +129,8 @@ export function NotificationsPage() {
 
   const markAllAsRead = async () => {
     try {
-      const token = localStorage.getItem('access_token');
-      if (!token) return;
-
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-f118884a/notifications/mark-all-read`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
-
-      if (response.ok) {
-        setNotifications(notifications.map(n => ({ ...n, read: true })));
-      }
+      await notificationsAPI.markAllAsRead();
+      setNotifications((current) => current.map((notification) => ({ ...notification, read: true })));
     } catch (error) {
       console.error('Error marking all notifications as read:', error);
     }
@@ -208,22 +138,8 @@ export function NotificationsPage() {
 
   const deleteNotification = async (notificationId: string) => {
     try {
-      const token = localStorage.getItem('access_token');
-      if (!token) return;
-
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-f118884a/notifications/${notificationId}`,
-        {
-          method: 'DELETE',
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
-
-      if (response.ok) {
-        setNotifications(notifications.filter(n => n.id !== notificationId));
-      }
+      await notificationsAPI.delete(notificationId);
+      setNotifications((current) => current.filter((notification) => notification.id !== notificationId));
     } catch (error) {
       console.error('Error deleting notification:', error);
     }
