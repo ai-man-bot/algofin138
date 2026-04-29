@@ -360,7 +360,7 @@ const livePerformanceMetrics = {
     try {
       setSaving(true);
       const token = getAccessToken() || publicAnonKey;
-      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-f118884a/strategies/clear-risk-settings`, {
+      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/webhook-listener/strategies/clear-risk-settings`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,

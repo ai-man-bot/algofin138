@@ -39,14 +39,14 @@ const supabase = createClient(
 // It does NOT require JWT authentication - validates using token parameter
 // 
 // ⚠️ CRITICAL: If webhooks stop working with 401 errors, check Supabase settings:
-//    Edge Functions → make-server-f118884a → Details → "Verify JWT with legacy secret"
+//    Edge Functions → webhook-listener → Details → "Verify JWT with legacy secret"
 //    This MUST be DISABLED (toggled OFF) for public webhook endpoints to work!
 //    
 //    Without this, TradingView and other external services cannot POST to /webhook-receiver
 //    because they don't have Supabase JWT tokens. The endpoint uses token-based auth instead.
 // ============================================
 
-app.post('/make-server-f118884a/webhook-receiver', async (c) => {
+app.post('/webhook-listener/webhook-receiver', async (c) => {
   const timestamp = new Date().toISOString();
   console.log('==========================================');
   console.log('🚨 WEBHOOK POST REQUEST RECEIVED');
@@ -572,12 +572,12 @@ app.post('/make-server-f118884a/webhook-receiver', async (c) => {
 // These must come BEFORE verifyUser is called
 
 // Health check
-app.get('/make-server-f118884a/health', (c) => {
+app.get('/webhook-listener/health', (c) => {
   return c.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 // Debug endpoint - check user's brokers (requires auth)
-app.get('/make-server-f118884a/debug/brokers', async (c) => {
+app.get('/webhook-listener/debug/brokers', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -606,7 +606,7 @@ app.get('/make-server-f118884a/debug/brokers', async (c) => {
 });
 
 // Debug endpoint - test Alpaca connection with dummy order (requires auth)
-app.post('/make-server-f118884a/debug/test-alpaca', async (c) => {
+app.post('/webhook-listener/debug/test-alpaca', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -677,7 +677,7 @@ app.post('/make-server-f118884a/debug/test-alpaca', async (c) => {
 });
 
 // Test endpoint - check if webhook token exists (PUBLIC)
-app.get('/make-server-f118884a/test-webhook-token/:token', async (c) => {
+app.get('/webhook-listener/test-webhook-token/:token', async (c) => {
   const token = c.req.param('token');
   console.log(`Testing webhook token: ${token}`);
   
@@ -705,7 +705,7 @@ app.get('/make-server-f118884a/test-webhook-token/:token', async (c) => {
 });
 
 // Test endpoint - get all events in database (PUBLIC, for debugging)
-app.get('/make-server-f118884a/test-all-events', async (c) => {
+app.get('/webhook-listener/test-all-events', async (c) => {
   try {
     // Get all webhook events regardless of user
     const allEvents = await kv.getByPrefix('user:');
@@ -750,7 +750,7 @@ app.get('/make-server-f118884a/test-all-events', async (c) => {
 });
 
 // Diagnostic endpoint - check what user ID is authenticated
-app.get('/make-server-f118884a/test-my-userid', async (c) => {
+app.get('/webhook-listener/test-my-userid', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     
@@ -848,7 +848,7 @@ async function createNotification(userId: string, notification: {
 // AUTH ROUTES
 // ============================================
 
-app.post('/make-server-f118884a/auth/signup', async (c) => {
+app.post('/webhook-listener/auth/signup', async (c) => {
   try {
     const { email, password, name } = await c.req.json();
     
@@ -881,7 +881,7 @@ app.post('/make-server-f118884a/auth/signup', async (c) => {
 });
 
 // Login endpoint
-app.post('/make-server-f118884a/auth/login', async (c) => {
+app.post('/webhook-listener/auth/login', async (c) => {
   try {
     const { email, password } = await c.req.json();
     
@@ -920,7 +920,7 @@ app.post('/make-server-f118884a/auth/login', async (c) => {
 // DASHBOARD ROUTES
 // ============================================
 
-app.get('/make-server-f118884a/dashboard/metrics', async (c) => {
+app.get('/webhook-listener/dashboard/metrics', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -945,7 +945,7 @@ app.get('/make-server-f118884a/dashboard/metrics', async (c) => {
   }
 });
 
-app.get('/make-server-f118884a/dashboard/equity-curve', async (c) => {
+app.get('/webhook-listener/dashboard/equity-curve', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -964,7 +964,7 @@ app.get('/make-server-f118884a/dashboard/equity-curve', async (c) => {
   }
 });
 
-app.get('/make-server-f118884a/dashboard/positions', async (c) => {
+app.get('/webhook-listener/dashboard/positions', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -977,7 +977,7 @@ app.get('/make-server-f118884a/dashboard/positions', async (c) => {
   }
 });
 
-app.get('/make-server-f118884a/dashboard/recent-orders', async (c) => {
+app.get('/webhook-listener/dashboard/recent-orders', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -994,7 +994,7 @@ app.get('/make-server-f118884a/dashboard/recent-orders', async (c) => {
 // TRADES ROUTES
 // ============================================
 
-app.get('/make-server-f118884a/trades', async (c) => {
+app.get('/webhook-listener/trades', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -1007,7 +1007,7 @@ app.get('/make-server-f118884a/trades', async (c) => {
   }
 });
 
-app.post('/make-server-f118884a/trades', async (c) => {
+app.post('/webhook-listener/trades', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -1033,7 +1033,7 @@ app.post('/make-server-f118884a/trades', async (c) => {
 // STRATEGY ROUTES
 // ============================================
 
-app.get('/make-server-f118884a/strategies', async (c) => {
+app.get('/webhook-listener/strategies', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -1046,7 +1046,7 @@ app.get('/make-server-f118884a/strategies', async (c) => {
   }
 });
 
-app.post('/make-server-f118884a/strategies', async (c) => {
+app.post('/webhook-listener/strategies', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -1061,7 +1061,7 @@ app.post('/make-server-f118884a/strategies', async (c) => {
     if (strategy.strategyType === 'tradingview') {
       webhookToken = crypto.randomUUID();
       const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
-      webhookUrl = `${supabaseUrl}/functions/v1/make-server-f118884a/tradingview-webhook/${strategyId}?token=${webhookToken}`;
+      webhookUrl = `${supabaseUrl}/functions/v1/webhook-listener/tradingview-webhook/${strategyId}?token=${webhookToken}`;
       console.log(`✅ Created TradingView webhook for strategy: ${strategy.name}`);
     } else {
       console.log(`✅ Created manual/algorithmic strategy (no webhook): ${strategy.name}`);
@@ -1083,7 +1083,7 @@ app.post('/make-server-f118884a/strategies', async (c) => {
   }
 });
 
-app.put('/make-server-f118884a/strategies/:id', async (c) => {
+app.put('/webhook-listener/strategies/:id', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -1104,7 +1104,7 @@ app.put('/make-server-f118884a/strategies/:id', async (c) => {
         // Switching to TradingView - create webhook
         const webhookToken = crypto.randomUUID();
         const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
-        const webhookUrl = `${supabaseUrl}/functions/v1/make-server-f118884a/tradingview-webhook/${strategyId}?token=${webhookToken}`;
+        const webhookUrl = `${supabaseUrl}/functions/v1/webhook-listener/tradingview-webhook/${strategyId}?token=${webhookToken}`;
         updatedData = { ...updatedData, webhookToken, webhookUrl };
         console.log(`✅ Added TradingView webhook to existing strategy`);
       } else if (updates.strategyType === 'manual') {
@@ -1125,7 +1125,7 @@ app.put('/make-server-f118884a/strategies/:id', async (c) => {
   }
 });
 
-app.delete('/make-server-f118884a/strategies/:id', async (c) => {
+app.delete('/webhook-listener/strategies/:id', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -1141,7 +1141,7 @@ app.delete('/make-server-f118884a/strategies/:id', async (c) => {
 });
 
 // Clear risk settings for all strategies
-app.post('/make-server-f118884a/strategies/clear-risk-settings', async (c) => {
+app.post('/webhook-listener/strategies/clear-risk-settings', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -1176,7 +1176,7 @@ app.post('/make-server-f118884a/strategies/clear-risk-settings', async (c) => {
 });
 
 // Debug endpoint - get all trades with their strategy IDs
-app.get('/make-server-f118884a/debug/trades', async (c) => {
+app.get('/webhook-listener/debug/trades', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -1241,7 +1241,7 @@ app.get('/make-server-f118884a/debug/trades', async (c) => {
 });
 
 // Fix orphaned trades - reassign trades to correct strategy based on strategy name
-app.post('/make-server-f118884a/debug/fix-trades', async (c) => {
+app.post('/webhook-listener/debug/fix-trades', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -1289,7 +1289,7 @@ app.post('/make-server-f118884a/debug/fix-trades', async (c) => {
 });
 
 // Debug endpoint - show strategy risk settings and blocked trades
-app.get('/make-server-f118884a/debug/strategy-risk', async (c) => {
+app.get('/webhook-listener/debug/strategy-risk', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -1346,7 +1346,7 @@ app.get('/make-server-f118884a/debug/strategy-risk', async (c) => {
 });
 
 // Backtest a strategy
-app.post('/make-server-f118884a/strategies/:id/backtest', async (c) => {
+app.post('/webhook-listener/strategies/:id/backtest', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -1442,7 +1442,7 @@ app.post('/make-server-f118884a/strategies/:id/backtest', async (c) => {
 });
 
 // Get backtest results for a strategy
-app.get('/make-server-f118884a/strategies/:id/backtests', async (c) => {
+app.get('/webhook-listener/strategies/:id/backtests', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -1702,7 +1702,7 @@ async function runBacktestSimulation(strategy: any, historicalData: any, initial
 // ============================================
 
 // TradingView webhook for specific strategy - PUBLIC endpoint with token validation
-app.post('/make-server-f118884a/tradingview-webhook/:strategyId', async (c) => {
+app.post('/webhook-listener/tradingview-webhook/:strategyId', async (c) => {
   const timestamp = new Date().toISOString();
   const strategyId = c.req.param('strategyId');
   const token = c.req.query('token');
@@ -2102,7 +2102,7 @@ app.post('/make-server-f118884a/tradingview-webhook/:strategyId', async (c) => {
 });
 
 // Get trades for a specific strategy
-app.get('/make-server-f118884a/strategies/:id/trades', async (c) => {
+app.get('/webhook-listener/strategies/:id/trades', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -2134,7 +2134,7 @@ app.get('/make-server-f118884a/strategies/:id/trades', async (c) => {
 });
 
 // Sync strategy trades with Alpaca to get latest status
-app.post('/make-server-f118884a/strategies/:id/sync-trades', async (c) => {
+app.post('/webhook-listener/strategies/:id/sync-trades', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -2365,7 +2365,7 @@ app.post('/make-server-f118884a/strategies/:id/sync-trades', async (c) => {
 // ============================================
 
 // Global sync all trades endpoint - syncs ALL user trades across all strategies
-app.post('/make-server-f118884a/trades/sync-all', async (c) => {
+app.post('/webhook-listener/trades/sync-all', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -2538,7 +2538,7 @@ app.post('/make-server-f118884a/trades/sync-all', async (c) => {
 });
 
 // Portfolio analytics endpoint - calculates comprehensive performance metrics
-app.get('/make-server-f118884a/analytics/portfolio', async (c) => {
+app.get('/webhook-listener/analytics/portfolio', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -2671,7 +2671,7 @@ app.get('/make-server-f118884a/analytics/portfolio', async (c) => {
   }
 });
 
-app.get('/make-server-f118884a/webhooks', async (c) => {
+app.get('/webhook-listener/webhooks', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -2684,7 +2684,7 @@ app.get('/make-server-f118884a/webhooks', async (c) => {
   }
 });
 
-app.post('/make-server-f118884a/webhooks', async (c) => {
+app.post('/webhook-listener/webhooks', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -2712,7 +2712,7 @@ app.post('/make-server-f118884a/webhooks', async (c) => {
     
     // Use the webhook-receiver endpoint in the main server function
     // This is a public endpoint that validates using the token parameter
-    const webhookUrl = `https://${hostname}/functions/v1/make-server-f118884a/webhook-receiver?token=${webhookToken}`;
+    const webhookUrl = `https://${hostname}/functions/v1/webhook-listener/webhook-receiver?token=${webhookToken}`;
     
     console.log(`Creating webhook with URL: ${webhookUrl}`);
     console.log(`  Linked to strategy: ${strategyName} (ID: ${webhook.strategyId || 'none'})`);
@@ -2743,7 +2743,7 @@ app.post('/make-server-f118884a/webhooks', async (c) => {
 // Webhook receiver endpoint - receives trade signals from external platforms
 // Format: POST /webhook/:token
 // The token parameter is used to identify which user's webhook this is
-app.post('/make-server-f118884a/webhook/:token', async (c) => {
+app.post('/webhook-listener/webhook/:token', async (c) => {
   const token = c.req.param('token');
   const payload = await c.req.json();
   
@@ -2787,7 +2787,7 @@ app.post('/make-server-f118884a/webhook/:token', async (c) => {
 });
 
 // Get ALL webhook events for a user (not filtered by webhook ID)
-app.get('/make-server-f118884a/webhooks/all/events', async (c) => {
+app.get('/webhook-listener/webhooks/all/events', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -2833,7 +2833,7 @@ app.get('/make-server-f118884a/webhooks/all/events', async (c) => {
   }
 });
 
-app.get('/make-server-f118884a/webhooks/:id/events', async (c) => {
+app.get('/webhook-listener/webhooks/:id/events', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -2858,7 +2858,7 @@ app.get('/make-server-f118884a/webhooks/:id/events', async (c) => {
 });
 
 // Backfill webhook events from existing trades (one-time migration)
-app.post('/make-server-f118884a/backfill-webhook-events', async (c) => {
+app.post('/webhook-listener/backfill-webhook-events', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -2939,7 +2939,7 @@ app.post('/make-server-f118884a/backfill-webhook-events', async (c) => {
   }
 });
 
-app.delete('/make-server-f118884a/webhooks/:id', async (c) => {
+app.delete('/webhook-listener/webhooks/:id', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -2964,7 +2964,7 @@ app.delete('/make-server-f118884a/webhooks/:id', async (c) => {
 // NOTIFICATION ROUTES
 // ============================================
 
-app.get('/make-server-f118884a/notifications', async (c) => {
+app.get('/webhook-listener/notifications', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -2977,7 +2977,7 @@ app.get('/make-server-f118884a/notifications', async (c) => {
   }
 });
 
-app.post('/make-server-f118884a/notifications', async (c) => {
+app.post('/webhook-listener/notifications', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -3000,7 +3000,7 @@ app.post('/make-server-f118884a/notifications', async (c) => {
   }
 });
 
-app.put('/make-server-f118884a/notifications/:id/read', async (c) => {
+app.put('/webhook-listener/notifications/:id/read', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -3024,7 +3024,7 @@ app.put('/make-server-f118884a/notifications/:id/read', async (c) => {
   }
 });
 
-app.get('/make-server-f118884a/notifications/preferences', async (c) => {
+app.get('/webhook-listener/notifications/preferences', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -3045,7 +3045,7 @@ app.get('/make-server-f118884a/notifications/preferences', async (c) => {
   }
 });
 
-app.put('/make-server-f118884a/notifications/preferences', async (c) => {
+app.put('/webhook-listener/notifications/preferences', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -3064,7 +3064,7 @@ app.put('/make-server-f118884a/notifications/preferences', async (c) => {
 // BROKER ROUTES
 // ============================================
 
-app.get('/make-server-f118884a/brokers', async (c) => {
+app.get('/webhook-listener/brokers', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -3083,7 +3083,7 @@ app.get('/make-server-f118884a/brokers', async (c) => {
   }
 });
 
-app.post('/make-server-f118884a/brokers', async (c) => {
+app.post('/webhook-listener/brokers', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -3171,7 +3171,7 @@ app.post('/make-server-f118884a/brokers', async (c) => {
   }
 });
 
-app.delete('/make-server-f118884a/brokers/:id', async (c) => {
+app.delete('/webhook-listener/brokers/:id', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -3187,7 +3187,7 @@ app.delete('/make-server-f118884a/brokers/:id', async (c) => {
 });
 
 // Get Alpaca account data
-app.get('/make-server-f118884a/alpaca/account', async (c) => {
+app.get('/webhook-listener/alpaca/account', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -3232,7 +3232,7 @@ app.get('/make-server-f118884a/alpaca/account', async (c) => {
 });
 
 // Get Alpaca positions
-app.get('/make-server-f118884a/alpaca/positions', async (c) => {
+app.get('/webhook-listener/alpaca/positions', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -3276,7 +3276,7 @@ app.get('/make-server-f118884a/alpaca/positions', async (c) => {
 });
 
 // Get Alpaca portfolio history for equity curve
-app.get('/make-server-f118884a/alpaca/portfolio-history', async (c) => {
+app.get('/webhook-listener/alpaca/portfolio-history', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -3334,7 +3334,7 @@ app.get('/make-server-f118884a/alpaca/portfolio-history', async (c) => {
 });
 
 // Get Alpaca orders (for trades history)
-app.get('/make-server-f118884a/alpaca/orders', async (c) => {
+app.get('/webhook-listener/alpaca/orders', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -3419,7 +3419,7 @@ app.get('/make-server-f118884a/alpaca/orders', async (c) => {
 });
 
 // Get Alpaca account activities (for P&L calculations)
-app.get('/make-server-f118884a/alpaca/activities', async (c) => {
+app.get('/webhook-listener/alpaca/activities', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -3461,7 +3461,7 @@ app.get('/make-server-f118884a/alpaca/activities', async (c) => {
 });
 
 // Get current price quote for a symbol
-app.get('/make-server-f118884a/alpaca/quote/:symbol', async (c) => {
+app.get('/webhook-listener/alpaca/quote/:symbol', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -3502,7 +3502,7 @@ app.get('/make-server-f118884a/alpaca/quote/:symbol', async (c) => {
 });
 
 // Get multiple quotes at once
-app.post('/make-server-f118884a/alpaca/quotes', async (c) => {
+app.post('/webhook-listener/alpaca/quotes', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -3551,7 +3551,7 @@ app.post('/make-server-f118884a/alpaca/quotes', async (c) => {
 });
 
 // Test webhook endpoint - proxies request to webhook-receiver
-app.post('/make-server-f118884a/test-webhook', async (c) => {
+app.post('/webhook-listener/test-webhook', async (c) => {
   try {
     const body = await c.req.json();
     const { webhookUrl, payload } = body;
@@ -3606,7 +3606,7 @@ app.post('/make-server-f118884a/test-webhook', async (c) => {
 // ============================================
 
 // Get all notifications for a user
-app.get('/make-server-f118884a/notifications', async (c) => {
+app.get('/webhook-listener/notifications', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -3628,7 +3628,7 @@ app.get('/make-server-f118884a/notifications', async (c) => {
 });
 
 // Mark notification as read
-app.patch('/make-server-f118884a/notifications/:id/read', async (c) => {
+app.patch('/webhook-listener/notifications/:id/read', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -3653,7 +3653,7 @@ app.patch('/make-server-f118884a/notifications/:id/read', async (c) => {
 });
 
 // Mark all notifications as read
-app.post('/make-server-f118884a/notifications/mark-all-read', async (c) => {
+app.post('/webhook-listener/notifications/mark-all-read', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -3677,7 +3677,7 @@ app.post('/make-server-f118884a/notifications/mark-all-read', async (c) => {
 });
 
 // Delete a notification
-app.delete('/make-server-f118884a/notifications/:id', async (c) => {
+app.delete('/webhook-listener/notifications/:id', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -3693,7 +3693,7 @@ app.delete('/make-server-f118884a/notifications/:id', async (c) => {
 });
 
 // Get/update notification settings
-app.get('/make-server-f118884a/notification-settings', async (c) => {
+app.get('/webhook-listener/notification-settings', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -3718,7 +3718,7 @@ app.get('/make-server-f118884a/notification-settings', async (c) => {
   }
 });
 
-app.post('/make-server-f118884a/notification-settings', async (c) => {
+app.post('/webhook-listener/notification-settings', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -3740,7 +3740,7 @@ app.post('/make-server-f118884a/notification-settings', async (c) => {
 // ============================================
 
 // List available MCP tools
-app.get('/make-server-f118884a/mcp/tools', async (c) => {
+app.get('/webhook-listener/mcp/tools', async (c) => {
   try {
     return c.json({
       tools: Object.values(MCP_TOOLS),
@@ -3754,7 +3754,7 @@ app.get('/make-server-f118884a/mcp/tools', async (c) => {
 });
 
 // Execute MCP tool
-app.post('/make-server-f118884a/mcp/execute', async (c) => {
+app.post('/webhook-listener/mcp/execute', async (c) => {
   try {
     const { error, userId } = await verifyUser(c.req.header('Authorization'));
     if (error) return c.json({ error }, 401);
@@ -3784,7 +3784,7 @@ app.post('/make-server-f118884a/mcp/execute', async (c) => {
 });
 
 // MCP Server info endpoint
-app.get('/make-server-f118884a/mcp/info', async (c) => {
+app.get('/webhook-listener/mcp/info', async (c) => {
   return c.json({
     name: 'AlgoFin.ai MCP Server',
     version: '1.0.0',
@@ -3799,9 +3799,9 @@ app.get('/make-server-f118884a/mcp/info', async (c) => {
       'Risk management and position sizing',
     ],
     endpoints: {
-      tools: '/make-server-f118884a/mcp/tools',
-      execute: '/make-server-f118884a/mcp/execute',
-      info: '/make-server-f118884a/mcp/info',
+      tools: '/webhook-listener/mcp/tools',
+      execute: '/webhook-listener/mcp/execute',
+      info: '/webhook-listener/mcp/info',
     },
   });
 });
