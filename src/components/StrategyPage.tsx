@@ -191,6 +191,56 @@ export function StrategyPage({ onNavigate }: { onNavigate?: (screen: string) => 
   const [tradesSortConfig, setTradesSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>({ key: 'entryTime', direction: 'desc' });
   const [tradesCurrentPage, setTradesCurrentPage] = useState(1);
   const tradesPerPage = 20;
+  const closedStrategyTrades = strategyTrades.filter(
+  (trade: any) =>
+    trade.status === 'closed' ||
+    trade.status === 'filled' ||
+    trade.status === 'completed'
+);
+
+const totalPnL = closedStrategyTrades.reduce(
+  (sum: number, trade: any) => sum + Number(trade.pnl ?? trade.profitLoss ?? trade.realized_pnl ?? 0),
+  0
+);
+
+const winningTrades = closedStrategyTrades.filter(
+  (trade: any) => Number(trade.pnl ?? trade.profitLoss ?? trade.realized_pnl ?? 0) > 0
+);
+
+const losingTrades = closedStrategyTrades.filter(
+  (trade: any) => Number(trade.pnl ?? trade.profitLoss ?? trade.realized_pnl ?? 0) < 0
+);
+
+const grossProfit = winningTrades.reduce(
+  (sum: number, trade: any) => sum + Number(trade.pnl ?? trade.profitLoss ?? trade.realized_pnl ?? 0),
+  0
+);
+
+const grossLoss = Math.abs(
+  losingTrades.reduce(
+    (sum: number, trade: any) => sum + Number(trade.pnl ?? trade.profitLoss ?? trade.realized_pnl ?? 0),
+    0
+  )
+);
+
+const livePerformanceMetrics = {
+  totalPnL,
+  totalPnLPercent:
+    selectedStrategy?.backtestData?.initialCapital
+      ? (totalPnL / selectedStrategy.backtestData.initialCapital) * 100
+      : 0,
+  winRate:
+    closedStrategyTrades.length > 0
+      ? (winningTrades.length / closedStrategyTrades.length) * 100
+      : 0,
+  profitFactor: grossLoss > 0 ? grossProfit / grossLoss : 0,
+  maxDrawdownPercent: 0,
+  expectancy:
+    closedStrategyTrades.length > 0
+      ? totalPnL / closedStrategyTrades.length
+      : 0,
+  totalTrades: closedStrategyTrades.length,
+};
   
   // Form state
   const [formData, setFormData] = useState({

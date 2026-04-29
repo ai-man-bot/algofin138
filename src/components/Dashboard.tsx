@@ -2,6 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { ArrowUp, ArrowDown, TrendingUp, TrendingDown, DollarSign, Wallet, Bell } from './CustomIcons';
 import { CustomAreaChart } from './CustomAreaChart';
 import { dashboardAPI, alpacaAPI, brokersAPI } from '../utils/api';
+import {
+  normalizeAlpacaAccount,
+  normalizeAlpacaOrder,
+  normalizeAlpacaPosition,
+  normalizeBrokerConnections,
+} from '../utils/brokerModels';
 
 interface DashboardProps {
   onNavigate?: (screen: string) => void;
@@ -108,22 +114,19 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
     loadDashboardData();
   }, [selectedBrokerId, selectedTimeframe]);
 
-  // Helper function to check if a broker is an Alpaca account
-  const isAlpacaBroker = (broker: any) => {
-    return broker.brokerType === 'alpaca' || broker.id === 'alpaca' || (typeof broker.id === 'string' && broker.id.startsWith('alpaca:'));
-  };
+  const isAlpacaBroker = (broker: any) => broker.provider === 'alpaca';
 
   const loadDashboardData = async () => {
     try {
       setLoading(true);
       
       // Get all connected brokers
-      const brokers = await brokersAPI.getAll();
+      const brokers = normalizeBrokerConnections(await brokersAPI.getAll());
       console.log('📊 Dashboard: Loaded brokers:', brokers);
       setConnectedBrokers(brokers || []);
       
       // Filter Alpaca brokers
-      const alpacaBrokers = brokers.filter((b: any) => isAlpacaBroker(b) && b.connected);
+      const alpacaBrokers = brokers.filter((b: any) => isAlpacaBroker(b) && b.status === 'connected');
       console.log('📊 Dashboard: Filtered Alpaca brokers:', alpacaBrokers);
       console.log('📊 Dashboard: Alpaca broker count:', alpacaBrokers.length);
       
