@@ -137,6 +137,53 @@ interface TradesTabProps {
   setSelectedBrokerId: (id: string) => void;
 }
 
+const safeNumber = (value: any, fallback = 0) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const normalizeBroker = (broker: any) => {
+  const brokerType =
+    broker?.brokerType ||
+    broker?.broker_type ||
+    broker?.provider ||
+    broker?.type ||
+    'alpaca';
+
+  const accountId =
+    broker?.accountId ||
+    broker?.account_id ||
+    broker?.metadata?.account?.id ||
+    broker?.metadata?.account?.account_number ||
+    'N/A';
+
+  const connectedAt =
+    broker?.connectedAt ||
+    broker?.connected_at ||
+    broker?.created_at ||
+    null;
+
+  const connected =
+    broker?.connected === true ||
+    broker?.status === 'connected' ||
+    broker?.status === 'active';
+
+  return {
+    ...broker,
+    brokerType,
+    accountId,
+    connectedAt,
+    connected,
+    status: connected ? 'connected' : broker?.status,
+    displayName: broker?.name || brokerType,
+  };
+};
+
+const isAlpacaBroker = (broker: any) => {
+  const brokerType = broker?.brokerType || broker?.broker_type || broker?.provider || broker?.type;
+  return brokerType === 'alpaca' || broker?.id === 'alpaca' || (typeof broker?.id === 'string' && broker.id.startsWith('alpaca:'));
+};
+
 export function TradesTab({ selectedBrokerId, setSelectedBrokerId }: TradesTabProps) {
   const [activeTab, setActiveTab] = useState<'webhooks' | 'open' | 'orders' | 'closed' | 'pending' | 'pl' | 'performance'>('webhooks');
   const [positions, setPositions] = useState<any[]>([]);
@@ -165,17 +212,13 @@ export function TradesTab({ selectedBrokerId, setSelectedBrokerId }: TradesTabPr
       setLoading(true);
       
       // Load connected brokers
-      const brokers = await brokersAPI.getAll();
+      const brokerRows = await brokersAPI.getAll();
+      const brokers = (Array.isArray(brokerRows) ? brokerRows : []).map(normalizeBroker);
       console.log('📊 TradesTab: Loaded brokers:', brokers);
-      setConnectedBrokers(brokers || []);
+      setConnectedBrokers(brokers);
       
-      // Helper function to check if a broker is an Alpaca account
-      const isAlpacaBroker = (broker: any) => {
-        return broker.brokerType === 'alpaca' || broker.id === 'alpaca' || (typeof broker.id === 'string' && broker.id.startsWith('alpaca:'));
-      };
-      
-      // Filter Alpaca brokers
-      const alpacaBrokers = brokers.filter((b: any) => isAlpacaBroker(b) && b.connected);
+      // Filter Alpaca brokers. Support both old camelCase and new Supabase snake_case fields.
+      const alpacaBrokers = brokers.filter((b: any) => isAlpacaBroker(b) && b.connected !== false);
       
       console.log('📊 TradesTab: Found Alpaca brokers:', alpacaBrokers.length);
       
@@ -214,16 +257,20 @@ export function TradesTab({ selectedBrokerId, setSelectedBrokerId }: TradesTabPr
       if (selectedBroker) {
         // Fetch positions and orders from Alpaca for the selected broker
         console.log(`📊 TradesTab: Fetching data for broker ${selectedBrokerId}`);
-        const [positionsData, ordersData] = await Promise.all([
-          alpacaAPI.getPositions(selectedBrokerId),
-          alpacaAPI.getOrders(selectedBrokerId, 'all', 500),
+        const [positionsResponse, ordersResponse] = await Promise.all([
+          alpacaAPI.getPositions(selectedBrokerId).catch((error: any) => ({ error })),
+          alpacaAPI.getOrders(selectedBrokerId, 'all', 500).catch((error: any) => ({ error })),
         ]);
         
-        if (positionsData.error || ordersData.error) {
+        if (positionsResponse?.error || ordersResponse?.error) {
+          console.error('TradesTab: Alpaca data load failed:', { positionsResponse, ordersResponse });
           setAlpacaConnected(false);
           setPositions([]);
           setOrders([]);
         } else {
+          const positionsData = Array.isArray(positionsResponse) ? positionsResponse : [];
+          const ordersData = Array.isArray(ordersResponse) ? ordersResponse : [];
+
           setAlpacaConnected(true);
           
           console.log('📊 Alpaca Data loaded:');
@@ -233,15 +280,22 @@ export function TradesTab({ selectedBrokerId, setSelectedBrokerId }: TradesTabPr
           setPositions(positionsData);
           setOrders(ordersData);
           
-          // Fetch quotes for all unique symbols
+          // Fetch quotes for all unique symbols. Do not fail the tab if quote endpoint is unavailable.
           const symbols = Array.from(new Set([
-            ...positionsData.map((p: any) => p.symbol),
-            ...ordersData.map((o: any) => o.symbol)
+            ...positionsData.map((p: any) => p.symbol).filter(Boolean),
+            ...ordersData.map((o: any) => o.symbol).filter(Boolean)
           ]));
           
           if (symbols.length > 0) {
-            const quotesData = await alpacaAPI.getQuotes(symbols);
-            setQuotes(quotesData.quotes || {});
+            try {
+              const quotesData = await alpacaAPI.getQuotes(symbols);
+              setQuotes(quotesData?.quotes || {});
+            } catch (quoteError) {
+              console.warn('TradesTab: quote fetch failed; continuing without quotes', quoteError);
+              setQuotes({});
+            }
+          } else {
+            setQuotes({});
           }
         }
       } else {
@@ -309,8 +363,8 @@ export function TradesTab({ selectedBrokerId, setSelectedBrokerId }: TradesTabPr
     
     // From open positions
     positions.forEach(pos => {
-      const unrealizedPL = parseFloat(pos.unrealized_pl || 0);
-      totalCostBasis += Math.abs(parseFloat(pos.cost_basis || 0));
+      const unrealizedPL = safeNumber(pos.unrealized_pl);
+      totalCostBasis += Math.abs(safeNumber(pos.cost_basis));
       totalProfitLoss += unrealizedPL;
       if (unrealizedPL > 0) winningTrades++;
       else if (unrealizedPL < 0) losingTrades++;
@@ -339,18 +393,18 @@ export function TradesTab({ selectedBrokerId, setSelectedBrokerId }: TradesTabPr
   const exportOpenTrades = () => {
     const headers = ['Asset', 'Price', 'Qty', 'Side', 'Market Value', 'Avg Entry', 'Cost Basis', 'Today\'s P/L (%)', 'Today\'s P/L ($)', 'Total P/L (%)', 'Total P/L ($)'];
     const rows = openTrades.map(pos => {
-      const currentPrice = quotes[pos.symbol]?.ap || parseFloat(pos.current_price || 0);
-      const qty = parseFloat(pos.qty || 0);
+      const currentPrice = quotes[pos.symbol]?.ap || safeNumber(pos.current_price);
+      const qty = safeNumber(pos.qty);
       const side = qty >= 0 ? 'Long' : 'Short';
-      const marketValue = parseFloat(pos.market_value || 0);
-      const avgEntry = parseFloat(pos.avg_entry_price || 0);
-      const costBasis = parseFloat(pos.cost_basis || 0);
+      const marketValue = safeNumber(pos.market_value);
+      const avgEntry = safeNumber(pos.avg_entry_price);
+      const costBasis = safeNumber(pos.cost_basis);
       
-      const todayPL = parseFloat(pos.unrealized_intraday_pl || 0);
-      const todayPLPercent = parseFloat(pos.unrealized_intraday_plpc || 0) * 100;
+      const todayPL = safeNumber(pos.unrealized_intraday_pl);
+      const todayPLPercent = safeNumber(pos.unrealized_intraday_plpc) * 100;
       
-      const unrealizedPL = parseFloat(pos.unrealized_pl || 0);
-      const unrealizedPLPercent = parseFloat(pos.unrealized_plpc || 0) * 100;
+      const unrealizedPL = safeNumber(pos.unrealized_pl);
+      const unrealizedPLPercent = safeNumber(pos.unrealized_plpc) * 100;
       
       return [
         pos.symbol,
@@ -400,10 +454,10 @@ export function TradesTab({ selectedBrokerId, setSelectedBrokerId }: TradesTabPr
         
         // Only pair if they are opposite sides
         if (firstOrder.side !== secondOrder.side) {
-          const firstQty = parseFloat(firstOrder.filled_qty || firstOrder.qty || 0);
-          const secondQty = parseFloat(secondOrder.filled_qty || secondOrder.qty || 0);
-          const firstPrice = parseFloat(firstOrder.filled_avg_price || 0);
-          const secondPrice = parseFloat(secondOrder.filled_avg_price || 0);
+          const firstQty = safeNumber(firstOrder.filled_qty || firstOrder.qty);
+          const secondQty = safeNumber(secondOrder.filled_qty || secondOrder.qty);
+          const firstPrice = safeNumber(firstOrder.filled_avg_price);
+          const secondPrice = safeNumber(secondOrder.filled_avg_price);
           const firstTime = firstOrder.filled_at || firstOrder.updated_at || firstOrder.created_at;
           const secondTime = secondOrder.filled_at || secondOrder.updated_at || secondOrder.created_at;
           
@@ -470,7 +524,7 @@ export function TradesTab({ selectedBrokerId, setSelectedBrokerId }: TradesTabPr
     const headers = ['Ticker', 'Current Price', 'Order Price', 'Order Time', 'Order Status', '# of Shares'];
     const rows = pendingOrders.map(order => {
       const currentPrice = quotes[order.symbol]?.ap || 0;
-      const orderPrice = parseFloat(order.limit_price || order.stop_price || 0);
+      const orderPrice = safeNumber(order.limit_price || order.stop_price);
       
       return [
         order.symbol,
@@ -488,8 +542,8 @@ export function TradesTab({ selectedBrokerId, setSelectedBrokerId }: TradesTabPr
   const exportOrders = () => {
     const headers = ['Asset', 'Order Type', 'Side', 'Qty', 'Avg. Fill Price', 'Total Amount', 'Submitted At', 'Filled At', 'Status'];
     const rows = orders.map(order => {
-      const qty = parseFloat(order.filled_qty || order.qty || 0);
-      const fillPrice = parseFloat(order.filled_avg_price || order.limit_price || 0);
+      const qty = safeNumber(order.filled_qty || order.qty);
+      const fillPrice = safeNumber(order.filled_avg_price || order.limit_price);
       const totalAmount = qty * fillPrice;
       
       return [
@@ -569,11 +623,6 @@ export function TradesTab({ selectedBrokerId, setSelectedBrokerId }: TradesTabPr
     );
   }
 
-  // Helper function to check if a broker is an Alpaca account
-  const isAlpacaBroker = (broker: any) => {
-    return broker.brokerType === 'alpaca' || broker.id === 'alpaca' || (typeof broker.id === 'string' && broker.id.startsWith('alpaca:'));
-  };
-
   return (
     <div className="min-h-screen bg-[#0f172a] p-6 space-y-6">
       {/* Broker Account Selector */}
@@ -595,7 +644,7 @@ export function TradesTab({ selectedBrokerId, setSelectedBrokerId }: TradesTabPr
               .filter((b: any) => isAlpacaBroker(b))
               .map((broker: any) => (
                 <option key={broker.id} value={broker.id}>
-                  {broker.name} - {broker.accountId}
+                  {broker.displayName || broker.name || 'Alpaca'} - {broker.accountId || broker.account_id || 'N/A'}
                 </option>
               ))}
           </select>
@@ -966,7 +1015,7 @@ function WebhookLogsTable({ events }: { events: any[] }) {
                     </td>
                     <td className="px-4 py-4 text-right">
                       <span className="text-sm text-slate-300 font-mono">
-                        {payload.price ? `$${parseFloat(payload.price).toFixed(2)}` : 'Market'}
+                        {payload.price ? `$${safeNumber(payload.price).toFixed(2)}` : 'Market'}
                       </span>
                     </td>
                     <td className="px-4 py-4">
@@ -1302,10 +1351,10 @@ function ClosedTradesTable({ trades }: { trades: any[] }) {
         
         // Only pair if they are opposite sides (buy/sell or sell/buy)
         if (firstOrder.side !== secondOrder.side) {
-          const firstQty = parseFloat(firstOrder.filled_qty || firstOrder.qty || 0);
-          const secondQty = parseFloat(secondOrder.filled_qty || secondOrder.qty || 0);
-          const firstPrice = parseFloat(firstOrder.filled_avg_price || 0);
-          const secondPrice = parseFloat(secondOrder.filled_avg_price || 0);
+          const firstQty = safeNumber(firstOrder.filled_qty || firstOrder.qty);
+          const secondQty = safeNumber(secondOrder.filled_qty || secondOrder.qty);
+          const firstPrice = safeNumber(firstOrder.filled_avg_price);
+          const secondPrice = safeNumber(secondOrder.filled_avg_price);
           const firstTime = firstOrder.filled_at || firstOrder.updated_at || firstOrder.created_at;
           const secondTime = secondOrder.filled_at || secondOrder.updated_at || secondOrder.created_at;
           
@@ -1720,7 +1769,7 @@ function PendingOrdersTable({ orders, quotes }: { orders: any[], quotes: Record<
           <tbody>
             {paginatedOrders.map((order, idx) => {
               const currentPrice = quotes[order.symbol]?.ap || 0;
-              const orderPrice = parseFloat(order.limit_price || order.stop_price || 0);
+              const orderPrice = safeNumber(order.limit_price || order.stop_price);
               const shares = parseFloat(order.qty || 0);
               
               return (
@@ -1907,10 +1956,10 @@ function ClosedPLPanel({ stats, brokerId }: { stats: any; brokerId: string }) {
         
         // Only pair if they are opposite sides
         if (firstOrder.side !== secondOrder.side) {
-          const firstQty = parseFloat(firstOrder.filled_qty || firstOrder.qty || 0);
-          const secondQty = parseFloat(secondOrder.filled_qty || secondOrder.qty || 0);
-          const firstPrice = parseFloat(firstOrder.filled_avg_price || 0);
-          const secondPrice = parseFloat(secondOrder.filled_avg_price || 0);
+          const firstQty = safeNumber(firstOrder.filled_qty || firstOrder.qty);
+          const secondQty = safeNumber(secondOrder.filled_qty || secondOrder.qty);
+          const firstPrice = safeNumber(firstOrder.filled_avg_price);
+          const secondPrice = safeNumber(secondOrder.filled_avg_price);
           const firstTime = firstOrder.filled_at || firstOrder.updated_at || firstOrder.created_at;
           const secondTime = secondOrder.filled_at || secondOrder.updated_at || secondOrder.created_at;
           
@@ -2118,10 +2167,10 @@ function ClosedPLPanel({ stats, brokerId }: { stats: any; brokerId: string }) {
             <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-6">
               <div className="text-sm text-slate-400 mb-2">Account Equity</div>
               <div className="text-3xl font-mono font-semibold text-white">
-                ${account ? parseFloat(account.equity || 0).toFixed(2) : '0.00'}
+                ${account ? safeNumber(account?.equity).toFixed(2) : '0.00'}
               </div>
               <div className="text-sm text-slate-400">
-                Cash: ${account ? parseFloat(account.cash || 0).toFixed(2) : '0.00'}
+                Cash: ${account ? safeNumber(account?.cash).toFixed(2) : '0.00'}
               </div>
             </div>
           </div>
@@ -2350,9 +2399,9 @@ function ClosedPLPanel({ stats, brokerId }: { stats: any; brokerId: string }) {
                   const headers = ['Timestamp', 'Equity', 'Profit/Loss', 'Profit/Loss %'];
                   const rows = (plData.timestamp || []).map((ts: number, idx: number) => [
                     new Date(ts * 1000).toLocaleString(),
-                    plData.equity[idx]?.toFixed(2) || '0',
-                    plData.profit_loss?.[idx]?.toFixed(2) || '0',
-                    plData.profit_loss_pct?.[idx]?.toFixed(2) || '0'
+                    safeNumber(plData.equity?.[idx]).toFixed(2),
+                    safeNumber(plData.profit_loss?.[idx]).toFixed(2),
+                    safeNumber(plData.profit_loss_pct?.[idx]).toFixed(2)
                   ]);
                   
                   const csvContent = [
