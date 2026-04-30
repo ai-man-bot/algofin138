@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowUp, ArrowDown, TrendingUp, TrendingDown, DollarSign, Wallet, Bell } from './CustomIcons';
+import {
+  ArrowUp,
+  ArrowDown,
+  TrendingUp,
+  TrendingDown,
+  DollarSign,
+  Wallet,
+  Bell,
+} from './CustomIcons';
 import { CustomAreaChart } from './CustomAreaChart';
 import { dashboardAPI, alpacaAPI, brokersAPI } from '../utils/api';
-import {
-  normalizeAlpacaAccount,
-  normalizeAlpacaOrder,
-  normalizeAlpacaPosition,
-  normalizeBrokerConnections,
-} from '../utils/brokerModels';
 
 interface DashboardProps {
   onNavigate?: (screen: string) => void;
@@ -21,6 +23,66 @@ interface EquityDataPoint {
   date: string;
   value: number;
   timestamp: number;
+}
+
+const safeNumber = (value: any, fallback = 0) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const formatCurrency = (value: any) =>
+  `$${safeNumber(value).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+
+const formatPercent = (value: any) => `${safeNumber(value).toFixed(2)}%`;
+
+function normalizeBroker(broker: any) {
+  const brokerType =
+    broker?.brokerType ||
+    broker?.broker_type ||
+    broker?.provider ||
+    broker?.type ||
+    'alpaca';
+
+  const accountId =
+    broker?.accountId ||
+    broker?.account_id ||
+    broker?.metadata?.account?.id ||
+    broker?.metadata?.account?.account_number ||
+    'N/A';
+
+  const connectedAt =
+    broker?.connectedAt ||
+    broker?.connected_at ||
+    broker?.created_at ||
+    null;
+
+  const connected =
+    broker?.connected === true ||
+    broker?.status === 'connected' ||
+    broker?.status === 'active';
+
+  return {
+    ...broker,
+    brokerType,
+    accountId,
+    connectedAt,
+    connected,
+    status: connected ? 'connected' : broker?.status,
+    displayName: broker?.name || brokerType,
+  };
+}
+
+function isAlpacaBroker(broker: any) {
+  const brokerType =
+    broker?.brokerType ||
+    broker?.broker_type ||
+    broker?.provider ||
+    broker?.type;
+
+  return brokerType === 'alpaca';
 }
 
 function toDateInputValue(date: Date) {
@@ -46,9 +108,11 @@ function getEquityHistoryParams(timeframe: EquityTimeframe) {
 
 function buildFallbackEquitySeries(equity: number): EquityDataPoint[] {
   const today = new Date();
+
   return Array.from({ length: 7 }).map((_, idx) => {
     const date = new Date(today);
     date.setDate(today.getDate() - (6 - idx));
+
     return {
       timestamp: date.getTime(),
       date: `${date.getMonth() + 1}/${date.getDate()}`,
@@ -62,36 +126,96 @@ function summarizeEquity(data: EquityDataPoint[]) {
     return { latest: 0, change: 0, changePercent: 0 };
   }
 
-  const first = data[0].value;
-  const latest = data[data.length - 1].value;
+  const first = safeNumber(data[0]?.value);
+  const latest = safeNumber(data[data.length - 1]?.value);
   const change = latest - first;
   const changePercent = first !== 0 ? (change / first) * 100 : 0;
 
   return { latest, change, changePercent };
 }
 
-function normalizeEquityData(raw: any[]): EquityDataPoint[] {
+function normalizeEquityData(raw: any): EquityDataPoint[] {
+  if (!raw) return [];
+
+  if (Array.isArray(raw)) {
+    return raw
+      .map((item: any, idx: number) => {
+        const numericValue = safeNumber(item?.value ?? item?.equity ?? item?.close);
+
+        const timestamp =
+          typeof item?.timestamp === 'number'
+            ? item.timestamp
+            : item?.date
+              ? new Date(item.date).getTime()
+              : Date.now() - (raw.length - idx) * 24 * 60 * 60 * 1000;
+
+        const pointDate = new Date(timestamp);
+
+        return {
+          timestamp,
+          date: `${pointDate.getMonth() + 1}/${pointDate.getDate()}`,
+          value: numericValue,
+        };
+      })
+      .filter((point: EquityDataPoint) => Number.isFinite(point.value))
+      .sort((a, b) => a.timestamp - b.timestamp);
+  }
+
+  if (Array.isArray(raw.timestamp) && Array.isArray(raw.equity)) {
+    return raw.timestamp
+      .map((ts: number, idx: number) => {
+        const date = new Date(ts * 1000);
+
+        return {
+          timestamp: date.getTime(),
+          date: `${date.getMonth() + 1}/${date.getDate()}`,
+          value: safeNumber(raw.equity[idx]),
+        };
+      })
+      .filter((point: EquityDataPoint) => Number.isFinite(point.value))
+      .sort((a, b) => a.timestamp - b.timestamp);
+  }
+
+  return [];
+}
+
+function normalizePositions(raw: any): any[] {
+  if (!Array.isArray(raw)) return [];
+
+  return raw.map((pos: any) => ({
+    asset: pos.asset || pos.symbol || 'N/A',
+    price: safeNumber(pos.price ?? pos.current_price ?? pos.market_value),
+    qty: safeNumber(pos.qty ?? pos.quantity),
+    pl: safeNumber(pos.pl ?? pos.unrealized_pl),
+    plPercent: safeNumber(pos.plPercent ?? pos.unrealized_plpc) * 100,
+  }));
+}
+
+function normalizeOrders(raw: any): any[] {
   if (!Array.isArray(raw)) return [];
 
   return raw
-    .map((item: any, idx: number) => {
-      const numericValue = Number(item?.value ?? item?.equity ?? item?.close ?? 0);
-      const timestamp =
-        typeof item?.timestamp === 'number'
-          ? item.timestamp
-          : item?.date
-            ? new Date(item.date).getTime()
-            : Date.now() - (raw.length - idx) * 24 * 60 * 60 * 1000;
+    .filter((order: any) => !order.status || order.status === 'filled')
+    .map((order: any) => {
+      const filledTime = order.filled_at || order.updated_at || order.created_at || new Date().toISOString();
+      const date = new Date(filledTime);
 
-      const pointDate = new Date(timestamp);
       return {
-        timestamp,
-        date: `${pointDate.getMonth() + 1}/${pointDate.getDate()}`,
-        value: numericValue,
+        time: date.toLocaleString('en-US', {
+          month: '2-digit',
+          day: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false,
+        }),
+        action: String(order.action || order.side || 'BUY').toUpperCase(),
+        symbol: order.symbol || 'N/A',
+        qty: safeNumber(order.qty ?? order.filled_qty),
+        price: safeNumber(order.price ?? order.filled_avg_price),
       };
-    })
-    .filter((point: EquityDataPoint) => Number.isFinite(point.value))
-    .sort((a, b) => a.timestamp - b.timestamp);
+    });
 }
 
 export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }: DashboardProps) {
@@ -102,6 +226,7 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
     dayChangePercent: 0,
     activeAlerts: 0,
   });
+
   const [equityData, setEquityData] = useState<EquityDataPoint[]>([]);
   const [positions, setPositions] = useState<any[]>([]);
   const [recentOrders, setRecentOrders] = useState<any[]>([]);
@@ -114,163 +239,112 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
     loadDashboardData();
   }, [selectedBrokerId, selectedTimeframe]);
 
-  const isAlpacaBroker = (broker: any) => broker.provider === 'alpaca';
-
   const loadDashboardData = async () => {
     try {
       setLoading(true);
-      
-      // Get all connected brokers
-      const brokers = normalizeBrokerConnections(await brokersAPI.getAll());
+
+      const brokerRows = await brokersAPI.getAll();
+      const brokers = (brokerRows || []).map(normalizeBroker);
+      setConnectedBrokers(brokers);
+
+      const alpacaBrokers = brokers.filter(
+        (broker: any) => isAlpacaBroker(broker) && broker.connected !== false
+      );
+
       console.log('📊 Dashboard: Loaded brokers:', brokers);
-      setConnectedBrokers(brokers || []);
-      
-      // Filter Alpaca brokers
-      const alpacaBrokers = brokers.filter((b: any) => isAlpacaBroker(b) && b.status === 'connected');
       console.log('📊 Dashboard: Filtered Alpaca brokers:', alpacaBrokers);
       console.log('📊 Dashboard: Alpaca broker count:', alpacaBrokers.length);
-      
-      // If no broker is selected and we have Alpaca brokers, select the first one
-      if (!selectedBrokerId && alpacaBrokers.length > 0) {
-        setSelectedBrokerId(alpacaBrokers[0].id);
-        return; // Will trigger re-render with selected broker
-      }
-      
-      // Find the selected broker
-      const selectedBroker = alpacaBrokers.find((b: any) => b.id === selectedBrokerId);
-      
-      if (selectedBroker) {
-        // Use real Alpaca data
-        try {
-          const [accountData, positionsData, portfolioHistory, ordersData] = await Promise.all([
-            alpacaAPI.getAccount(selectedBrokerId),
-            alpacaAPI.getPositions(selectedBrokerId),
-            (() => {
-              const params = getEquityHistoryParams(selectedTimeframe);
-              return alpacaAPI.getPortfolioHistory(
-                selectedBrokerId,
-                undefined,
-                params.timeframe,
-                params.startDate,
-                params.endDate
-              );
-            })(),
-            alpacaAPI.getOrders(selectedBrokerId, 'all', 10), // Get last 10 orders
-          ]);
-          
-          // Set metrics from Alpaca account
-          const equity = parseFloat(accountData.equity);
-          const lastEquity = parseFloat(accountData.last_equity);
-          const dayChange = equity - lastEquity;
-          const dayChangePercent = lastEquity > 0 ? ((dayChange / lastEquity) * 100) : 0;
-          
-          setMetrics({
-            totalEquity: equity,
-            buyingPower: parseFloat(accountData.buying_power),
-            dayChange: dayChange,
-            dayChangePercent: dayChangePercent,
-            activeAlerts: 0,
-          });
-          
-          // Transform Alpaca positions
-          if (positionsData && positionsData.length > 0) {
-            const transformedPositions = positionsData.map((pos: any) => ({
-              asset: pos.symbol,
-              price: parseFloat(pos.current_price),
-              qty: parseInt(pos.qty),
-              pl: parseFloat(pos.unrealized_pl),
-              plPercent: parseFloat(pos.unrealized_plpc) * 100,
-            }));
-            setPositions(transformedPositions);
-          } else {
-            setPositions([]);
-          }
-          
-          // Transform recent orders for live feed
-          if (ordersData && ordersData.length > 0) {
-            const transformedOrders = ordersData
-              .filter((order: any) => order.status === 'filled')
-              .map((order: any) => {
-                const filledTime = order.filled_at || order.updated_at || order.created_at;
-                const date = new Date(filledTime);
-                return {
-                  time: date.toLocaleString('en-US', { 
-                    month: '2-digit', 
-                    day: '2-digit', 
-                    year: 'numeric',
-                    hour: '2-digit', 
-                    minute: '2-digit', 
-                    second: '2-digit', 
-                    hour12: false 
-                  }),
-                  action: order.side.toUpperCase(),
-                  symbol: order.symbol,
-                  qty: parseInt(order.filled_qty || order.qty || 0),
-                  price: parseFloat(order.filled_avg_price || 0),
-                };
-              });
-            setRecentOrders(transformedOrders);
-          } else {
-            setRecentOrders([]);
-          }
-          
-          // Transform portfolio history for equity curve
-          if (portfolioHistory && portfolioHistory.timestamp && portfolioHistory.equity && portfolioHistory.equity.length > 0) {
-            const chartData = portfolioHistory.timestamp.map((ts: number, idx: number) => {
-              const date = new Date(ts * 1000);
-              return {
-                timestamp: date.getTime(),
-                date: `${date.getMonth() + 1}/${date.getDate()}`,
-                value: portfolioHistory.equity[idx],
-              };
-            }).filter((point: EquityDataPoint) => Number.isFinite(point.value));
 
-            setEquityData(chartData);
-          } else {
-            // Graceful fallback when broker has no historical points for selected timeframe
-            setEquityData(buildFallbackEquitySeries(equity));
-          }
-          setHasBrokerConnected(true);
-        } catch (alpacaError) {
-          console.error('Error fetching Alpaca data:', alpacaError);
-          // Fall back to default data if Alpaca fails
-          await loadDefaultData();
-        }
-      } else {
-        // No Alpaca connected, use default data
-        await loadDefaultData();
+      if (alpacaBrokers.length === 0) {
+        await loadDefaultData(false);
+        return;
+      }
+
+      if (!selectedBrokerId) {
+        setSelectedBrokerId(alpacaBrokers[0].id);
+      }
+
+      const activeBrokerId = selectedBrokerId || alpacaBrokers[0].id;
+
+      try {
+        const params = getEquityHistoryParams(selectedTimeframe);
+
+        const [accountData, positionsData, portfolioHistory, ordersData] = await Promise.all([
+          alpacaAPI.getAccount(activeBrokerId).catch(() => null),
+          alpacaAPI.getPositions(activeBrokerId).catch(() => []),
+          alpacaAPI
+            .getPortfolioHistory(
+              activeBrokerId,
+              undefined,
+              params.timeframe,
+              params.startDate,
+              params.endDate
+            )
+            .catch(() => []),
+          alpacaAPI.getOrders(activeBrokerId, 'all', 10).catch(() => []),
+        ]);
+
+        const equity = safeNumber(accountData?.equity ?? accountData?.totalEquity);
+        const lastEquity = safeNumber(accountData?.last_equity ?? accountData?.lastEquity ?? equity);
+        const buyingPower = safeNumber(accountData?.buying_power ?? accountData?.buyingPower);
+        const dayChange = equity - lastEquity;
+        const dayChangePercent = lastEquity > 0 ? (dayChange / lastEquity) * 100 : 0;
+
+        setMetrics({
+          totalEquity: equity,
+          buyingPower,
+          dayChange,
+          dayChangePercent,
+          activeAlerts: safeNumber(accountData?.activeAlerts),
+        });
+
+        setPositions(normalizePositions(positionsData));
+        setRecentOrders(normalizeOrders(ordersData));
+
+        const normalizedEquity = normalizeEquityData(portfolioHistory);
+        setEquityData(
+          normalizedEquity.length > 0 ? normalizedEquity : buildFallbackEquitySeries(equity)
+        );
+
+        setHasBrokerConnected(true);
+      } catch (alpacaError) {
+        console.error('Error fetching Alpaca data:', alpacaError);
+        await loadDefaultData(true);
       }
     } catch (error) {
       console.error('Error loading dashboard data:', error);
-      await loadDefaultData();
+      await loadDefaultData(false);
     } finally {
       setLoading(false);
     }
   };
-  
-  const loadDefaultData = async () => {
+
+  const loadDefaultData = async (brokerStillConnected = false) => {
     try {
       const [metricsData, equityCurveData, positionsData, recentOrdersData] = await Promise.all([
-        dashboardAPI.getMetrics(),
-        dashboardAPI.getEquityCurve(),
-        dashboardAPI.getPositions(),
-        dashboardAPI.getRecentOrders(),
+        dashboardAPI.getMetrics().catch(() => null),
+        dashboardAPI.getEquityCurve().catch(() => []),
+        dashboardAPI.getPositions().catch(() => []),
+        dashboardAPI.getRecentOrders().catch(() => []),
       ]);
 
-      setMetrics(metricsData || {
-        totalEquity: 0,
-        buyingPower: 0,
-        dayChange: 0,
-        dayChangePercent: 0,
-        activeAlerts: 0,
+      setMetrics({
+        totalEquity: safeNumber(metricsData?.totalEquity),
+        buyingPower: safeNumber(metricsData?.buyingPower),
+        dayChange: safeNumber(metricsData?.dayChange),
+        dayChangePercent: safeNumber(metricsData?.dayChangePercent),
+        activeAlerts: safeNumber(metricsData?.activeAlerts),
       });
-      setEquityData(normalizeEquityData(equityCurveData || []));
-      setPositions(positionsData || []);
-      setRecentOrders(recentOrdersData || []);
-      setHasBrokerConnected(false);
+
+      const normalizedEquity = normalizeEquityData(equityCurveData);
+      setEquityData(normalizedEquity);
+
+      setPositions(normalizePositions(positionsData));
+      setRecentOrders(normalizeOrders(recentOrdersData));
+      setHasBrokerConnected(brokerStillConnected);
     } catch (error) {
       console.error('Error loading default data:', error);
-      // Set empty states
+
       setMetrics({
         totalEquity: 0,
         buyingPower: 0,
@@ -278,10 +352,11 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
         dayChangePercent: 0,
         activeAlerts: 0,
       });
+
       setEquityData([]);
       setPositions([]);
       setRecentOrders([]);
-      setHasBrokerConnected(false);
+      setHasBrokerConnected(brokerStillConnected);
     }
   };
 
@@ -295,10 +370,10 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
 
   const equitySummary = summarizeEquity(equityData);
   const timeframeOptions: EquityTimeframe[] = ['1M', '3M', '6M', '1Y', 'ALL'];
+  const alpacaBrokersForSelect = connectedBrokers.filter((broker: any) => isAlpacaBroker(broker));
 
   return (
     <div className="min-h-screen bg-[#0f172a] mx-auto max-w-[1600px] px-6 py-8">
-      {/* No Broker Connected Banner */}
       {!hasBrokerConnected && (
         <div className="mb-8 rounded-xl border border-blue-500/30 bg-blue-500/10 p-6 backdrop-blur-sm">
           <div className="flex items-start gap-4">
@@ -311,7 +386,7 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
                 Connect Alpaca or Interactive Brokers to view your account data, execute trades, and track performance in real-time.
               </p>
               <button
-                onClick={() => onNavigate ? onNavigate('brokers') : null}
+                onClick={() => (onNavigate ? onNavigate('brokers') : null)}
                 className="rounded-lg bg-blue-500 px-6 py-2.5 text-sm transition-colors hover:bg-blue-600"
               >
                 Connect Broker
@@ -320,9 +395,8 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
           </div>
         </div>
       )}
-      
-      {/* Broker Account Selector */}
-      {hasBrokerConnected && connectedBrokers.filter((b: any) => isAlpacaBroker(b)).length > 0 && (
+
+      {hasBrokerConnected && alpacaBrokersForSelect.length > 0 && (
         <div className="mb-6 flex items-center justify-between rounded-xl border border-slate-700/50 bg-slate-900/30 p-4 backdrop-blur-sm">
           <div className="flex items-center gap-3">
             <div className="text-2xl">🦙</div>
@@ -331,63 +405,62 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
               <p className="text-xs text-slate-500">Select an account to display</p>
             </div>
           </div>
+
           <select
-            value={selectedBrokerId}
+            value={selectedBrokerId || alpacaBrokersForSelect[0]?.id || ''}
             onChange={(e) => setSelectedBrokerId(e.target.value)}
             className="rounded-lg border border-slate-700 bg-slate-800/50 px-4 py-2 text-sm text-white outline-none transition-colors focus:border-blue-500"
           >
-            {connectedBrokers
-              .filter((b: any) => isAlpacaBroker(b))
-              .map((broker: any) => (
-                <option key={broker.id} value={broker.id}>
-                  {broker.name} - {broker.accountId}
-                </option>
-              ))}
+            {alpacaBrokersForSelect.map((broker: any) => (
+              <option key={broker.id} value={broker.id}>
+                {broker.displayName || broker.name || 'Alpaca'} - {broker.accountId || 'N/A'}
+              </option>
+            ))}
           </select>
         </div>
       )}
-      
-      {/* Metrics Row */}
+
       <div className="mb-8 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
         <MetricCard
           icon={<DollarSign className="h-6 w-6" />}
           title="Total Equity"
-          value={`$${metrics.totalEquity.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-          change={`${metrics.dayChangePercent >= 0 ? '+' : ''}${metrics.dayChangePercent.toFixed(2)}%`}
-          positive={metrics.dayChangePercent >= 0}
+          value={formatCurrency(metrics.totalEquity)}
+          change={`${safeNumber(metrics.dayChangePercent) >= 0 ? '+' : ''}${formatPercent(metrics.dayChangePercent)}`}
+          positive={safeNumber(metrics.dayChangePercent) >= 0}
           iconBg="bg-blue-500/10"
           iconColor="text-blue-400"
         />
+
         <MetricCard
           icon={<Wallet className="h-6 w-6" />}
           title="Buying Power"
-          value={`$${metrics.buyingPower.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          value={formatCurrency(metrics.buyingPower)}
           subtext="Available"
           iconBg="bg-cyan-500/10"
           iconColor="text-cyan-400"
         />
+
         <MetricCard
-          icon={metrics.dayChange >= 0 ? <TrendingUp className="h-6 w-6" /> : <TrendingDown className="h-6 w-6" />}
+          icon={safeNumber(metrics.dayChange) >= 0 ? <TrendingUp className="h-6 w-6" /> : <TrendingDown className="h-6 w-6" />}
           title="Day Change"
-          value={`$${metrics.dayChange.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-          change={`${metrics.dayChangePercent >= 0 ? '+' : ''}${metrics.dayChangePercent.toFixed(2)}%`}
-          positive={metrics.dayChange >= 0}
-          iconBg={metrics.dayChange >= 0 ? "bg-emerald-500/10" : "bg-rose-500/10"}
-          iconColor={metrics.dayChange >= 0 ? "text-emerald-400" : "text-rose-400"}
+          value={formatCurrency(metrics.dayChange)}
+          change={`${safeNumber(metrics.dayChangePercent) >= 0 ? '+' : ''}${formatPercent(metrics.dayChangePercent)}`}
+          positive={safeNumber(metrics.dayChange) >= 0}
+          iconBg={safeNumber(metrics.dayChange) >= 0 ? 'bg-emerald-500/10' : 'bg-rose-500/10'}
+          iconColor={safeNumber(metrics.dayChange) >= 0 ? 'text-emerald-400' : 'text-rose-400'}
         />
+
         <MetricCard
           icon={<Bell className="h-6 w-6" />}
           title="Active Alerts"
-          value={metrics.activeAlerts.toString()}
+          value={String(safeNumber(metrics.activeAlerts))}
           subtext="3 triggered today"
           iconBg="bg-rose-500/10"
           iconColor="text-rose-400"
         />
       </div>
 
-      {/* Equity Curve and Live Trading Feed Row */}
       <div className="mb-8 grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {/* Equity Curve */}
         <div className="rounded-xl border border-slate-700/50 bg-slate-900/30 backdrop-blur-sm">
           <div className="border-b border-slate-700/50 p-6">
             <div className="flex items-center justify-between">
@@ -395,10 +468,11 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
                 <h3 className="mb-1 text-slate-100">Account Equity</h3>
                 <p className="text-sm text-slate-400">
                   {equitySummary.latest > 0
-                    ? `${selectedTimeframe} change: ${equitySummary.change >= 0 ? '+' : ''}$${Math.abs(equitySummary.change).toLocaleString('en-US', { maximumFractionDigits: 2 })} (${equitySummary.changePercent >= 0 ? '+' : ''}${equitySummary.changePercent.toFixed(2)}%)`
+                    ? `${selectedTimeframe} change: ${equitySummary.change >= 0 ? '+' : ''}${formatCurrency(Math.abs(equitySummary.change))} (${equitySummary.changePercent >= 0 ? '+' : ''}${formatPercent(equitySummary.changePercent)})`
                     : 'Portfolio value over time'}
                 </p>
               </div>
+
               <div className="flex gap-2">
                 {timeframeOptions.map((timeframe) => (
                   <button
@@ -416,7 +490,8 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
               </div>
             </div>
           </div>
-          {equityData && equityData.length > 0 ? (
+
+          {equityData.length > 0 ? (
             <div className="h-[400px] w-full">
               <CustomAreaChart data={equityData} />
             </div>
@@ -427,12 +502,12 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
           )}
         </div>
 
-        {/* Live Trading Feed */}
         <div className="rounded-xl border border-slate-700/50 bg-slate-900/30 backdrop-blur-sm">
           <div className="border-b border-slate-700/50 p-6">
             <h3 className="text-slate-100">Live Trading Feed</h3>
             <p className="text-sm text-slate-400">Recent orders</p>
           </div>
+
           <div className="h-[400px] overflow-y-auto">
             {recentOrders.length > 0 ? (
               recentOrders.map((trade, idx) => (
@@ -441,11 +516,13 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
                   className="flex items-center justify-between border-b border-slate-700/30 p-4 transition-colors hover:bg-slate-800/30"
                 >
                   <div className="flex items-center gap-3">
-                    <div className={`rounded px-2 py-1 text-xs ${
-                      trade.action === 'BUY' 
-                        ? 'bg-emerald-500/10 text-emerald-400' 
-                        : 'bg-rose-500/10 text-rose-400'
-                    }`}>
+                    <div
+                      className={`rounded px-2 py-1 text-xs ${
+                        trade.action === 'BUY'
+                          ? 'bg-emerald-500/10 text-emerald-400'
+                          : 'bg-rose-500/10 text-rose-400'
+                      }`}
+                    >
                       {trade.action}
                     </div>
                     <div>
@@ -453,9 +530,14 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
                       <div className="text-xs text-slate-500">{trade.time}</div>
                     </div>
                   </div>
+
                   <div className="text-right font-mono text-sm">
-                    <div className="text-slate-300">{trade.qty} @ ${trade.price}</div>
-                    <div className="text-xs text-slate-500">${(trade.qty * trade.price).toFixed(2)}</div>
+                    <div className="text-slate-300">
+                      {safeNumber(trade.qty)} @ {formatCurrency(trade.price)}
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      {formatCurrency(safeNumber(trade.qty) * safeNumber(trade.price))}
+                    </div>
                   </div>
                 </div>
               ))
@@ -468,12 +550,12 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
         </div>
       </div>
 
-      {/* Active Positions Table */}
       <div className="rounded-xl border border-slate-700/50 bg-slate-900/30 backdrop-blur-sm">
         <div className="border-b border-slate-700/50 p-6">
           <h3 className="text-slate-100">Active Positions</h3>
           <p className="text-sm text-slate-400">Current holdings</p>
         </div>
+
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -484,22 +566,37 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
                 <th className="p-4">P/L</th>
               </tr>
             </thead>
+
             <tbody className="font-mono text-sm">
-              {positions.map((position, idx) => (
-                <tr key={idx} className="border-b border-slate-700/30 transition-colors hover:bg-slate-800/30">
-                  <td className="p-4 text-slate-100">{position.asset}</td>
-                  <td className="p-4 text-slate-300">${position.price.toFixed(2)}</td>
-                  <td className="p-4 text-slate-300">{position.qty}</td>
-                  <td className="p-4">
-                    <div className={position.pl >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
-                      {position.pl >= 0 ? '+' : ''}${position.pl.toFixed(2)}
-                    </div>
-                    <div className={`text-xs ${position.pl >= 0 ? 'text-emerald-400/70' : 'text-rose-400/70'}`}>
-                      {position.pl >= 0 ? '+' : ''}{position.plPercent.toFixed(2)}%
-                    </div>
+              {positions.length > 0 ? (
+                positions.map((position, idx) => (
+                  <tr key={idx} className="border-b border-slate-700/30 transition-colors hover:bg-slate-800/30">
+                    <td className="p-4 text-slate-100">{position.asset}</td>
+                    <td className="p-4 text-slate-300">{formatCurrency(position.price)}</td>
+                    <td className="p-4 text-slate-300">{safeNumber(position.qty)}</td>
+                    <td className="p-4">
+                      <div className={safeNumber(position.pl) >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                        {safeNumber(position.pl) >= 0 ? '+' : ''}
+                        {formatCurrency(position.pl)}
+                      </div>
+                      <div
+                        className={`text-xs ${
+                          safeNumber(position.pl) >= 0 ? 'text-emerald-400/70' : 'text-rose-400/70'
+                        }`}
+                      >
+                        {safeNumber(position.plPercent) >= 0 ? '+' : ''}
+                        {formatPercent(position.plPercent)}
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={4} className="p-8 text-center text-slate-400">
+                    No active positions
                   </td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
         </div>
@@ -519,13 +616,23 @@ interface MetricCardProps {
   iconColor: string;
 }
 
-function MetricCard({ icon, title, value, change, positive, subtext, iconBg, iconColor }: MetricCardProps) {
+function MetricCard({
+  icon,
+  title,
+  value,
+  change,
+  positive,
+  subtext,
+  iconBg,
+  iconColor,
+}: MetricCardProps) {
   return (
     <div className="rounded-xl border border-slate-700/50 bg-slate-900/30 p-6 backdrop-blur-sm transition-all hover:border-slate-600/50">
       <div className="mb-4 flex items-center justify-between">
         <div className={`rounded-lg p-3 ${iconBg}`}>
           <div className={iconColor}>{icon}</div>
         </div>
+
         {change && (
           <div className={`flex items-center gap-1 text-sm ${positive ? 'text-emerald-400' : 'text-rose-400'}`}>
             {positive ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />}
@@ -533,6 +640,7 @@ function MetricCard({ icon, title, value, change, positive, subtext, iconBg, ico
           </div>
         )}
       </div>
+
       <div>
         <p className="mb-1 text-sm text-slate-400">{title}</p>
         <p className="font-mono text-slate-100">{value}</p>
