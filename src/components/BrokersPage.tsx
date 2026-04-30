@@ -23,6 +23,35 @@ const availableBrokers = [
   },
 ];
 
+function normalizeBroker(broker: any) {
+  const brokerType =
+    broker?.brokerType ||
+    broker?.broker_type ||
+    broker?.type ||
+    'alpaca';
+
+  const accountId =
+    broker?.accountId ||
+    broker?.account_id ||
+    broker?.metadata?.account?.id ||
+    broker?.metadata?.account?.account_number ||
+    'N/A';
+
+  const connectedAt =
+    broker?.connectedAt ||
+    broker?.connected_at ||
+    broker?.created_at ||
+    null;
+
+  return {
+    ...broker,
+    brokerType,
+    accountId,
+    connectedAt,
+    displayName: broker?.name || brokerType,
+  };
+}
+
 export function BrokersPage() {
   const [showModal, setShowModal] = useState(false);
   const [selectedBroker, setSelectedBroker] = useState<any>(null);
@@ -41,7 +70,7 @@ export function BrokersPage() {
     try {
       setLoading(true);
       const brokers = await brokersAPI.getAll();
-      setConnectedBrokers(brokers || []);
+      setConnectedBrokers((brokers || []).map(normalizeBroker));
     } catch (err) {
       console.error('Error loading brokers:', err);
     } finally {
@@ -70,7 +99,7 @@ export function BrokersPage() {
     try {
       setConnecting(true);
       setError('');
-      
+
       console.log('🔌 Attempting to connect broker:', selectedBroker.name);
       console.log('  API Key length:', apiKey.length);
       console.log('  API Secret length:', apiSecret.length);
@@ -81,26 +110,25 @@ export function BrokersPage() {
         apiKey,
         apiSecret
       );
-      
+
       console.log('✅ Broker connected successfully');
 
-      // Reload brokers
       await loadBrokers();
-
       closeModal();
     } catch (err: any) {
       console.error('❌ Error connecting broker:', err);
       console.error('  Error message:', err.message);
-      
-      // Provide more helpful error messages
+
       let errorMessage = err.message || 'Failed to connect broker';
-      
+
       if (errorMessage.includes('Invalid authentication token')) {
-        errorMessage = 'Your session has expired. Please log out and log in again, then try connecting your broker.';
+        errorMessage =
+          'Your session has expired. Please log out and log in again, then try connecting your broker.';
       } else if (errorMessage.includes('Invalid Alpaca credentials')) {
-        errorMessage = 'Invalid Alpaca API credentials. Please check your API Key and Secret Key.';
+        errorMessage =
+          'Invalid Alpaca API credentials. Please check your API Key and Secret Key.';
       }
-      
+
       setError(errorMessage);
     } finally {
       setConnecting(false);
@@ -128,22 +156,26 @@ export function BrokersPage() {
 
   return (
     <div className="min-h-screen bg-[#0f172a] mx-auto max-w-[1600px] px-6 py-8">
-      {/* Header */}
       <div className="mb-8">
         <h2 className="mb-2 text-slate-100">Broker Connections</h2>
         <p className="text-slate-400">Manage your trading account integrations</p>
       </div>
 
-      {/* Connected Broker Accounts */}
       {connectedBrokers.length > 0 && (
         <>
           <div className="mb-4">
-            <h3 className="text-slate-100">Connected Accounts ({connectedBrokers.length})</h3>
+            <h3 className="text-slate-100">
+              Connected Accounts ({connectedBrokers.length})
+            </h3>
             <p className="text-sm text-slate-400">Your active broker connections</p>
           </div>
+
           <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3 mb-8">
             {connectedBrokers.map((connectedBroker) => {
-              const brokerInfo = availableBrokers.find(b => b.id === connectedBroker.brokerType);
+              const brokerInfo = availableBrokers.find(
+                (broker) => broker.id === connectedBroker.brokerType
+              );
+
               return (
                 <div
                   key={connectedBroker.id}
@@ -155,8 +187,12 @@ export function BrokersPage() {
                         {brokerInfo?.logo || '🏦'}
                       </div>
                       <div>
-                        <h3 className="text-slate-100">{connectedBroker.name}</h3>
-                        <p className="text-xs text-slate-500">{brokerInfo?.description || 'Trading account'}</p>
+                        <h3 className="text-slate-100">
+                          {connectedBroker.displayName}
+                        </h3>
+                        <p className="text-xs text-slate-500">
+                          {brokerInfo?.description || 'Trading account'}
+                        </p>
                       </div>
                     </div>
                     <CheckCircle2 className="h-5 w-5 text-emerald-400" />
@@ -172,18 +208,20 @@ export function BrokersPage() {
                   <div className="space-y-2">
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-slate-400">Account ID:</span>
-                      <span className="font-mono text-xs text-slate-300 truncate">
-                        {connectedBroker.accountId || 'N/A'}
+                      <span className="font-mono text-xs text-slate-300 truncate max-w-[180px]">
+                        {connectedBroker.accountId}
                       </span>
                     </div>
+
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-slate-400">Connected:</span>
                       <span className="text-slate-300">
-                        {connectedBroker.connectedAt 
-                          ? new Date(connectedBroker.connectedAt).toLocaleDateString() 
+                        {connectedBroker.connectedAt
+                          ? new Date(connectedBroker.connectedAt).toLocaleDateString()
                           : 'Unknown'}
                       </span>
                     </div>
+
                     <button
                       onClick={() => handleDisconnect(connectedBroker.id)}
                       className="mt-4 w-full rounded-lg border border-rose-700 bg-rose-500/10 py-2 text-sm text-rose-400 transition-colors hover:bg-rose-500/20"
@@ -198,13 +236,14 @@ export function BrokersPage() {
         </>
       )}
 
-      {/* Add New Broker Section */}
       <div className="mb-4">
         <h3 className="text-slate-100">Add New Connection</h3>
-        <p className="text-sm text-slate-400">Connect another trading account (supports multiple accounts per broker)</p>
+        <p className="text-sm text-slate-400">
+          Connect another trading account (supports multiple accounts per broker)
+        </p>
       </div>
+
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3 mb-8">
-        {/* Add New Broker Card */}
         <button
           onClick={() => setShowModal(true)}
           className="group rounded-xl border-2 border-dashed border-slate-700/50 bg-slate-900/20 p-6 backdrop-blur-sm transition-all hover:border-blue-500/50 hover:bg-slate-900/30"
@@ -219,7 +258,6 @@ export function BrokersPage() {
         </button>
       </div>
 
-      {/* Connection Instructions */}
       <div className="mt-8 rounded-xl border border-slate-700/50 bg-slate-900/30 p-6 backdrop-blur-sm">
         <h3 className="mb-4 text-slate-100">How to Connect</h3>
         <ol className="space-y-3 text-sm text-slate-400">
@@ -251,12 +289,13 @@ export function BrokersPage() {
             <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/10 text-xs text-emerald-400">
               ✓
             </span>
-            <span>You can connect multiple accounts from the same broker (e.g., multiple Alpaca accounts)</span>
+            <span>
+              You can connect multiple accounts from the same broker, such as multiple Alpaca accounts.
+            </span>
           </li>
         </ol>
       </div>
 
-      {/* Connection Modal */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="relative w-full max-w-md rounded-2xl border border-slate-700/50 bg-slate-900 p-8 shadow-2xl">
@@ -271,7 +310,9 @@ export function BrokersPage() {
               {selectedBroker ? `Connect ${selectedBroker.name}` : 'Connect Broker'}
             </h3>
             <p className="mb-6 text-sm text-slate-400">
-              {selectedBroker ? 'Enter your API credentials to establish connection' : 'Select a broker and enter your API credentials'}
+              {selectedBroker
+                ? 'Enter your API credentials to establish connection'
+                : 'Select a broker and enter your API credentials'}
             </p>
 
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -283,14 +324,16 @@ export function BrokersPage() {
                   <select
                     value={selectedBroker?.id || ''}
                     onChange={(e) => {
-                      const broker = availableBrokers.find(b => b.id === e.target.value);
+                      const broker = availableBrokers.find(
+                        (availableBroker) => availableBroker.id === e.target.value
+                      );
                       setSelectedBroker(broker || null);
                     }}
                     className="w-full rounded-lg border border-slate-700 bg-slate-800/50 py-3 px-4 text-white outline-none transition-colors focus:border-blue-500"
                     required
                   >
                     <option value="">Choose a broker...</option>
-                    {availableBrokers.map(broker => (
+                    {availableBrokers.map((broker) => (
                       <option key={broker.id} value={broker.id}>
                         {broker.logo} {broker.name}
                       </option>
@@ -298,6 +341,7 @@ export function BrokersPage() {
                   </select>
                 </div>
               )}
+
               {selectedBroker && (
                 <div className="rounded-lg bg-slate-800/50 border border-slate-700 p-3 flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-700 text-xl">
@@ -316,10 +360,9 @@ export function BrokersPage() {
                   </button>
                 </div>
               )}
+
               <div>
-                <label className="mb-2 block text-sm text-slate-300">
-                  API Key
-                </label>
+                <label className="mb-2 block text-sm text-slate-300">API Key</label>
                 <div className="relative">
                   <Key className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-500" />
                   <input
