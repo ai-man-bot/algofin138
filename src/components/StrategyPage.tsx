@@ -61,6 +61,19 @@ const formatDate = (timestamp: string) => {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 };
 
+const safeNumber = (value: any, fallback = 0) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const safeToFixed = (value: any, digits = 2) => safeNumber(value).toFixed(digits);
+
+const getTradePnl = (trade: any) =>
+  safeNumber(trade?.pnl ?? trade?.profitLoss ?? trade?.realized_pnl ?? trade?.realizedPnl ?? 0);
+
+const getTradeSubmittedAt = (trade: any) =>
+  trade?.submittedAt || trade?.submitted_at || trade?.created_at || trade?.filled_at || new Date().toISOString();
+
 const calculateHoldingTime = (entryTime: string, exitTime?: string) => {
   const start = new Date(entryTime).getTime();
   const end = exitTime ? new Date(exitTime).getTime() : Date.now();
@@ -360,7 +373,7 @@ const livePerformanceMetrics = {
     try {
       setSaving(true);
       const token = getAccessToken() || publicAnonKey;
-      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/webhook-listener/strategies/clear-risk-settings`, {
+      const response = await fetch(buildFunctionUrl('/strategies/clear-risk-settings'), {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -938,19 +951,19 @@ const livePerformanceMetrics = {
                           <div className="rounded-lg bg-slate-800/50 p-3">
                             <p className="text-xs text-slate-500 mb-1">Net Profit</p>
                             <p className={`font-mono text-sm ${selectedStrategy.backtestData.netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                              ${selectedStrategy.backtestData.netProfit.toFixed(2)}
+                              ${safeToFixed(selectedStrategy.backtestData.netProfit, 2)}
                             </p>
                             <p className={`font-mono text-xs ${selectedStrategy.backtestData.netProfitPercent >= 0 ? 'text-emerald-400/70' : 'text-rose-400/70'}`}>
-                              ({selectedStrategy.backtestData.netProfitPercent.toFixed(2)}%)
+                              ({safeToFixed(selectedStrategy.backtestData.netProfitPercent, 2)}%)
                             </p>
                           </div>
                           <div className="rounded-lg bg-slate-800/50 p-3">
                             <p className="text-xs text-slate-500 mb-1">Max Equity Drawdown</p>
                             <p className="font-mono text-sm text-rose-400">
-                              ${Math.abs(selectedStrategy.backtestData.maxEquityDrawdown).toFixed(2)}
+                              ${safeToFixed(Math.abs(safeNumber(selectedStrategy.backtestData.maxEquityDrawdown)), 2)}
                             </p>
                             <p className="font-mono text-xs text-rose-400/70">
-                              ({selectedStrategy.backtestData.maxEquityDrawdownPercent.toFixed(2)}%)
+                              ({safeToFixed(selectedStrategy.backtestData.maxEquityDrawdownPercent, 2)}%)
                             </p>
                           </div>
                           <div className="rounded-lg bg-slate-800/50 p-3">
@@ -965,7 +978,7 @@ const livePerformanceMetrics = {
                               {selectedStrategy.backtestData.winningTrades}
                             </p>
                             <p className="font-mono text-xs text-emerald-400/70">
-                              ({selectedStrategy.backtestData.percentProfitable.toFixed(2)}%)
+                              ({safeToFixed(selectedStrategy.backtestData.percentProfitable, 2)}%)
                             </p>
                           </div>
                           <div className="rounded-lg bg-slate-800/50 p-3">
@@ -977,37 +990,37 @@ const livePerformanceMetrics = {
                           <div className="rounded-lg bg-slate-800/50 p-3">
                             <p className="text-xs text-slate-500 mb-1">Avg P&L</p>
                             <p className={`font-mono text-sm ${selectedStrategy.backtestData.avgPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                              ${selectedStrategy.backtestData.avgPnL.toFixed(2)}
+                              ${safeToFixed(selectedStrategy.backtestData.avgPnL, 2)}
                             </p>
                           </div>
                           <div className="rounded-lg bg-slate-800/50 p-3">
                             <p className="text-xs text-slate-500 mb-1">Avg Winning Trade</p>
                             <p className="font-mono text-sm text-emerald-400">
-                              ${selectedStrategy.backtestData.avgWinningTrade.toFixed(2)}
+                              ${safeToFixed(selectedStrategy.backtestData.avgWinningTrade, 2)}
                             </p>
                           </div>
                           <div className="rounded-lg bg-slate-800/50 p-3">
                             <p className="text-xs text-slate-500 mb-1">Avg Losing Trade</p>
                             <p className="font-mono text-sm text-rose-400">
-                              ${Math.abs(selectedStrategy.backtestData.avgLosingTrade).toFixed(2)}
+                              ${safeToFixed(Math.abs(safeNumber(selectedStrategy.backtestData.avgLosingTrade)), 2)}
                             </p>
                           </div>
                           <div className="rounded-lg bg-slate-800/50 p-3">
                             <p className="text-xs text-slate-500 mb-1">Ratio Avg Win / Avg Loss</p>
                             <p className="font-mono text-sm text-cyan-400">
-                              {selectedStrategy.backtestData.ratioAvgWinLoss.toFixed(2)}
+                              {safeToFixed(selectedStrategy.backtestData.ratioAvgWinLoss, 2)}
                             </p>
                           </div>
                           <div className="rounded-lg bg-slate-800/50 p-3">
                             <p className="text-xs text-slate-500 mb-1">Sharpe Ratio</p>
                             <p className="font-mono text-sm text-blue-400">
-                              {selectedStrategy.backtestData.sharpeRatio.toFixed(2)}
+                              {safeToFixed(selectedStrategy.backtestData.sharpeRatio, 2)}
                             </p>
                           </div>
                           <div className="rounded-lg bg-slate-800/50 p-3">
                             <p className="text-xs text-slate-500 mb-1">Profit Factor</p>
                             <p className="font-mono text-sm text-purple-400">
-                              {selectedStrategy.backtestData.profitFactor.toFixed(2)}
+                              {safeToFixed(selectedStrategy.backtestData.profitFactor, 2)}
                             </p>
                           </div>
                         </div>
@@ -1059,28 +1072,28 @@ const livePerformanceMetrics = {
                             <div className="rounded-lg bg-slate-800/50 p-3">
                               <p className="text-xs text-slate-500 mb-1">Net P&amp;L</p>
                               <p className={`font-mono text-sm ${livePerformanceMetrics.totalPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                ${livePerformanceMetrics.totalPnL.toFixed(2)}
+                                ${safeToFixed(livePerformanceMetrics.totalPnL, 2)}
                               </p>
                               <p className={`font-mono text-xs ${livePerformanceMetrics.totalPnLPercent >= 0 ? 'text-emerald-400/70' : 'text-rose-400/70'}`}>
-                                ({livePerformanceMetrics.totalPnLPercent.toFixed(2)}%)
+                                ({safeToFixed(livePerformanceMetrics.totalPnLPercent, 2)}%)
                               </p>
                             </div>
                             <div className="rounded-lg bg-slate-800/50 p-3">
                               <p className="text-xs text-slate-500 mb-1">Win Rate</p>
-                              <p className="font-mono text-sm text-emerald-400">{livePerformanceMetrics.winRate.toFixed(2)}%</p>
+                              <p className="font-mono text-sm text-emerald-400">{safeToFixed(livePerformanceMetrics.winRate, 2)}%</p>
                             </div>
                             <div className="rounded-lg bg-slate-800/50 p-3">
                               <p className="text-xs text-slate-500 mb-1">Profit Factor</p>
-                              <p className="font-mono text-sm text-cyan-400">{livePerformanceMetrics.profitFactor.toFixed(2)}</p>
+                              <p className="font-mono text-sm text-cyan-400">{safeToFixed(livePerformanceMetrics.profitFactor, 2)}</p>
                             </div>
                             <div className="rounded-lg bg-slate-800/50 p-3">
                               <p className="text-xs text-slate-500 mb-1">Max Drawdown</p>
-                              <p className="font-mono text-sm text-rose-400">{livePerformanceMetrics.maxDrawdownPercent.toFixed(2)}%</p>
+                              <p className="font-mono text-sm text-rose-400">{safeToFixed(livePerformanceMetrics.maxDrawdownPercent, 2)}%</p>
                             </div>
                             <div className="rounded-lg bg-slate-800/50 p-3">
                               <p className="text-xs text-slate-500 mb-1">Expectancy</p>
                               <p className={`font-mono text-sm ${livePerformanceMetrics.expectancy >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                ${livePerformanceMetrics.expectancy.toFixed(2)}
+                                ${safeToFixed(livePerformanceMetrics.expectancy, 2)}
                               </p>
                             </div>
                             <div className="rounded-lg bg-slate-800/50 p-3">
@@ -1422,19 +1435,19 @@ const livePerformanceMetrics = {
                       <div className="rounded-lg bg-slate-800/50 p-2">
                         <p className="text-slate-500">Net Profit</p>
                         <p className={`font-mono ${backtestData.netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                          ${backtestData.netProfit.toFixed(2)}
+                          ${safeToFixed(backtestData.netProfit, 2)}
                         </p>
                         <p className={`font-mono text-[10px] ${backtestData.netProfitPercent >= 0 ? 'text-emerald-400/70' : 'text-rose-400/70'}`}>
-                          ({backtestData.netProfitPercent.toFixed(2)}%)
+                          ({safeToFixed(backtestData.netProfitPercent, 2)}%)
                         </p>
                       </div>
                       <div className="rounded-lg bg-slate-800/50 p-2">
                         <p className="text-slate-500">Max Equity Drawdown</p>
                         <p className="font-mono text-rose-400">
-                          ${Math.abs(backtestData.maxEquityDrawdown).toFixed(2)}
+                          ${safeToFixed(Math.abs(safeNumber(backtestData.maxEquityDrawdown)), 2)}
                         </p>
                         <p className="font-mono text-[10px] text-rose-400/70">
-                          ({backtestData.maxEquityDrawdownPercent.toFixed(2)}%)
+                          ({safeToFixed(backtestData.maxEquityDrawdownPercent, 2)}%)
                         </p>
                       </div>
                       <div className="rounded-lg bg-slate-800/50 p-2">
@@ -1447,7 +1460,7 @@ const livePerformanceMetrics = {
                           {backtestData.winningTrades}
                         </p>
                         <p className="font-mono text-[10px] text-emerald-400/70">
-                          ({backtestData.percentProfitable.toFixed(2)}%)
+                          ({safeToFixed(backtestData.percentProfitable, 2)}%)
                         </p>
                       </div>
                       <div className="rounded-lg bg-slate-800/50 p-2">
@@ -1456,33 +1469,33 @@ const livePerformanceMetrics = {
                       </div>
                       <div className="rounded-lg bg-slate-800/50 p-2">
                         <p className="text-slate-500">Percent Profitable</p>
-                        <p className="font-mono text-blue-400">{backtestData.percentProfitable.toFixed(2)}%</p>
+                        <p className="font-mono text-blue-400">{safeToFixed(backtestData.percentProfitable, 2)}%</p>
                       </div>
                       <div className="rounded-lg bg-slate-800/50 p-2">
                         <p className="text-slate-500">Avg P&L</p>
                         <p className={`font-mono ${backtestData.avgPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                          ${backtestData.avgPnL.toFixed(2)}
+                          ${safeToFixed(backtestData.avgPnL, 2)}
                         </p>
                       </div>
                       <div className="rounded-lg bg-slate-800/50 p-2">
                         <p className="text-slate-500">Avg Winning Trade</p>
-                        <p className="font-mono text-emerald-400">${backtestData.avgWinningTrade.toFixed(2)}</p>
+                        <p className="font-mono text-emerald-400">${safeToFixed(backtestData.avgWinningTrade, 2)}</p>
                       </div>
                       <div className="rounded-lg bg-slate-800/50 p-2">
                         <p className="text-slate-500">Avg Losing Trade</p>
-                        <p className="font-mono text-rose-400">${Math.abs(backtestData.avgLosingTrade).toFixed(2)}</p>
+                        <p className="font-mono text-rose-400">${safeToFixed(Math.abs(safeNumber(backtestData.avgLosingTrade)), 2)}</p>
                       </div>
                       <div className="rounded-lg bg-slate-800/50 p-2">
                         <p className="text-slate-500">Ratio Avg Win / Avg Loss</p>
-                        <p className="font-mono text-cyan-400">{backtestData.ratioAvgWinLoss.toFixed(2)}</p>
+                        <p className="font-mono text-cyan-400">{safeToFixed(backtestData.ratioAvgWinLoss, 2)}</p>
                       </div>
                       <div className="rounded-lg bg-slate-800/50 p-2">
                         <p className="text-slate-500">Sharpe Ratio</p>
-                        <p className="font-mono text-blue-400">{backtestData.sharpeRatio.toFixed(2)}</p>
+                        <p className="font-mono text-blue-400">{safeToFixed(backtestData.sharpeRatio, 2)}</p>
                       </div>
                       <div className="rounded-lg bg-slate-800/50 p-2">
                         <p className="text-slate-500">Profit Factor</p>
-                        <p className="font-mono text-purple-400">{backtestData.profitFactor.toFixed(2)}</p>
+                        <p className="font-mono text-purple-400">{safeToFixed(backtestData.profitFactor, 2)}</p>
                       </div>
                       {backtestData.properties && Object.keys(backtestData.properties).length > 0 && (
                         <div className="rounded-lg bg-slate-800/50 p-2 col-span-2">
@@ -1739,13 +1752,13 @@ const livePerformanceMetrics = {
                     <MetricRow
                       icon={<TrendingUp className="h-5 w-5" />}
                       label="Win Rate"
-                      value={`${backtestResults.winRate.toFixed(2)}%`}
+                      value={`${safeToFixed(backtestResults.winRate, 2)}%`}
                       color="text-emerald-400"
                     />
                     <MetricRow
                       icon={<TrendingUp className="h-5 w-5" />}
                       label="Total Return"
-                      value={`${backtestResults.totalReturn.toFixed(2)}%`}
+                      value={`${safeToFixed(backtestResults.totalReturn, 2)}%`}
                       color="text-emerald-400"
                     />
                     <MetricRow
@@ -1781,19 +1794,19 @@ const livePerformanceMetrics = {
                     <MetricRow
                       icon={<TrendingUp className="h-5 w-5" />}
                       label="Profit Factor"
-                      value={backtestResults.profitFactor.toFixed(2)}
+                      value={safeToFixed(backtestResults.profitFactor, 2)}
                       color="text-emerald-400"
                     />
                     <MetricRow
                       icon={<TrendingUp className="h-5 w-5" />}
                       label="Max Drawdown"
-                      value={`${backtestResults.maxDrawdown.toFixed(2)}%`}
+                      value={`${safeToFixed(backtestResults.maxDrawdown, 2)}%`}
                       color="text-red-400"
                     />
                     <MetricRow
                       icon={<TrendingUp className="h-5 w-5" />}
                       label="Sharpe Ratio"
-                      value={backtestResults.sharpeRatio.toFixed(2)}
+                      value={safeToFixed(backtestResults.sharpeRatio, 2)}
                       color="text-emerald-400"
                     />
                   </div>
@@ -1894,7 +1907,7 @@ function ClosedTradesPLView({ trades, timeRange, onTimeRangeChange }: ClosedTrad
   const filterTradesByTimeRange = (days: number) => {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - days);
-    return trades.filter(t => new Date(t.submittedAt) >= cutoffDate);
+    return trades.filter(t => new Date(getTradeSubmittedAt(t)) >= cutoffDate);
   };
 
   // Calculate metrics for the selected time range
@@ -1928,7 +1941,7 @@ function ClosedTradesPLView({ trades, timeRange, onTimeRangeChange }: ClosedTrad
       const cutoff = new Date();
       cutoff.setDate(cutoff.getDate() - days);
       return allTrades
-        .filter((t: any) => new Date(t.submittedAt) >= cutoff)
+        .filter((t: any) => new Date(getTradeSubmittedAt(t)) >= cutoff)
         .reduce((sum: number, t: any) => sum + (parseFloat(t.pnl as any) || 0), 0);
     };
 
@@ -1946,15 +1959,11 @@ function ClosedTradesPLView({ trades, timeRange, onTimeRangeChange }: ClosedTrad
     };
   });
 
-  const livePerformanceMetrics = selectedStrategy
-    ? calculateLiveMetricsFromTrades(
-        strategyTrades.filter((trade) => trade.strategyId === selectedStrategy.id),
-        selectedStrategy.backtestData?.initialCapital || 100000,
-      )
-    : null;
-  const accountEquity = selectedStrategy?.backtestData
-    ? selectedStrategy.backtestData.initialCapital + (livePerformanceMetrics?.totalPnL || 0)
-    : 100000 + (livePerformanceMetrics?.totalPnL || 0);
+  const livePerformanceMetrics = calculateLiveMetricsFromTrades(
+    trades,
+    100000,
+  );
+  const accountEquity = 100000 + safeNumber(livePerformanceMetrics?.totalPnL);
 
   return (
     <div className="space-y-6">
@@ -1991,23 +2000,23 @@ function ClosedTradesPLView({ trades, timeRange, onTimeRangeChange }: ClosedTrad
         <div className="rounded-xl border border-slate-700/50 bg-slate-900/30 p-6">
           <p className="mb-1 text-xs text-slate-500">Total Profit/Loss ({timeRange})</p>
           <p className={`text-3xl font-mono ${totalPL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-            {totalPL >= 0 ? '+' : ''}${totalPL.toFixed(2)}
+            {totalPL >= 0 ? '+' : ''}${safeToFixed(totalPL, 2)}
           </p>
           <p className="mt-1 text-xs text-slate-500">
-            {totalPL >= 0 ? '+' : ''}{((totalPL / accountEquity) * 100).toFixed(2)}%
+            {totalPL >= 0 ? '+' : ''}{safeToFixed(accountEquity ? (totalPL / accountEquity) * 100 : 0, 2)}%
           </p>
         </div>
         <div className="rounded-xl border border-slate-700/50 bg-slate-900/30 p-6">
           <p className="mb-1 text-xs text-slate-500">Win Rate</p>
-          <p className="text-3xl font-mono text-blue-400">{winRate.toFixed(1)}%</p>
+          <p className="text-3xl font-mono text-blue-400">{safeToFixed(winRate, 1)}%</p>
           <p className="mt-1 text-xs text-slate-500">
             {winningTrades} wins / {totalTrades - winningTrades} losses
           </p>
         </div>
         <div className="rounded-xl border border-slate-700/50 bg-slate-900/30 p-6">
           <p className="mb-1 text-xs text-slate-500">Account Equity</p>
-          <p className="text-3xl font-mono text-slate-100">${accountEquity.toFixed(2)}</p>
-          <p className="mt-1 text-xs text-slate-500">Cash: ${(accountEquity * 0.82).toFixed(2)}</p>
+          <p className="text-3xl font-mono text-slate-100">${safeToFixed(accountEquity, 2)}</p>
+          <p className="mt-1 text-xs text-slate-500">Cash: ${safeToFixed(accountEquity * 0.82, 2)}</p>
         </div>
       </div>
 
@@ -2040,42 +2049,42 @@ function ClosedTradesPLView({ trades, timeRange, onTimeRangeChange }: ClosedTrad
                   </td>
                   <td className="px-4 py-4 text-center">
                     <span className={`text-sm font-mono ${ticker.winRate >= 50 ? 'text-emerald-400' : 'text-yellow-400'}`}>
-                      {ticker.winRate.toFixed(1)}%
+                      {ticker.safeToFixed(winRate, 1)}%
                     </span>
                   </td>
                   <td className="px-4 py-4 text-right">
                     <span className={`text-sm font-mono ${ticker.pl1D >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {ticker.pl1D !== 0 ? (ticker.pl1D >= 0 ? '+' : '') + ticker.pl1D.toFixed(2) : 'N/A'}
+                      {ticker.pl1D !== 0 ? (ticker.pl1D >= 0 ? '+' : '') + safeToFixed(ticker.pl1D, 2) : 'N/A'}
                     </span>
                   </td>
                   <td className="px-4 py-4 text-right">
                     <span className={`text-sm font-mono ${ticker.pl1W >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {ticker.pl1W !== 0 ? (ticker.pl1W >= 0 ? '+' : '') + ticker.pl1W.toFixed(2) : 'N/A'}
+                      {ticker.pl1W !== 0 ? (ticker.pl1W >= 0 ? '+' : '') + safeToFixed(ticker.pl1W, 2) : 'N/A'}
                     </span>
                   </td>
                   <td className="px-4 py-4 text-right">
                     <span className={`text-sm font-mono ${ticker.pl1M >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {ticker.pl1M !== 0 ? (ticker.pl1M >= 0 ? '+' : '') + ticker.pl1M.toFixed(2) : 'N/A'}
+                      {ticker.pl1M !== 0 ? (ticker.pl1M >= 0 ? '+' : '') + safeToFixed(ticker.pl1M, 2) : 'N/A'}
                     </span>
                   </td>
                   <td className="px-4 py-4 text-right">
                     <span className={`text-sm font-mono ${ticker.pl1Q >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {ticker.pl1Q !== 0 ? (ticker.pl1Q >= 0 ? '+' : '') + ticker.pl1Q.toFixed(2) : 'N/A'}
+                      {ticker.pl1Q !== 0 ? (ticker.pl1Q >= 0 ? '+' : '') + safeToFixed(ticker.pl1Q, 2) : 'N/A'}
                     </span>
                   </td>
                   <td className="px-4 py-4 text-right">
                     <span className={`text-sm font-mono ${ticker.pl6M >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {ticker.pl6M !== 0 ? (ticker.pl6M >= 0 ? '+' : '') + ticker.pl6M.toFixed(2) : 'N/A'}
+                      {ticker.pl6M !== 0 ? (ticker.pl6M >= 0 ? '+' : '') + safeToFixed(ticker.pl6M, 2) : 'N/A'}
                     </span>
                   </td>
                   <td className="px-4 py-4 text-right">
                     <span className={`text-sm font-mono ${ticker.pl1Y >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {ticker.pl1Y !== 0 ? (ticker.pl1Y >= 0 ? '+' : '') + ticker.pl1Y.toFixed(2) : 'N/A'}
+                      {ticker.pl1Y !== 0 ? (ticker.pl1Y >= 0 ? '+' : '') + safeToFixed(ticker.pl1Y, 2) : 'N/A'}
                     </span>
                   </td>
                   <td className="px-4 py-4 text-right">
                     <span className={`text-sm font-mono font-semibold ${ticker.plTotal >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {ticker.plTotal >= 0 ? '+' : ''}${ticker.plTotal.toFixed(2)}
+                      {ticker.plTotal >= 0 ? '+' : ''}${safeToFixed(ticker.plTotal, 2)}
                     </span>
                   </td>
                 </tr>
@@ -2433,17 +2442,17 @@ function StrategyTradesPanel({ strategy, trades, loading, onClose, onRefresh }: 
               <div className="rounded-xl border border-slate-700/50 bg-slate-900/30 p-4">
                 <p className="mb-1 text-xs text-slate-500">Total P/L</p>
                 <p className={`text-2xl font-mono ${totalPL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  ${totalPL.toFixed(2)}
+                  ${safeToFixed(totalPL, 2)}
                 </p>
               </div>
               <div className="rounded-xl border border-slate-700/50 bg-slate-900/30 p-4">
                 <p className="mb-1 text-xs text-slate-500">Win Rate</p>
-                <p className="text-2xl font-mono text-slate-100">{winRate.toFixed(1)}%</p>
+                <p className="text-2xl font-mono text-slate-100">{safeToFixed(winRate, 1)}%</p>
               </div>
               <div className="rounded-xl border border-slate-700/50 bg-slate-900/30 p-4">
                 <p className="mb-1 text-xs text-slate-500">Avg P/L per Trade</p>
                 <p className={`text-2xl font-mono ${avgPL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  ${avgPL.toFixed(2)}
+                  ${safeToFixed(avgPL, 2)}
                 </p>
               </div>
             </div>
@@ -2707,10 +2716,10 @@ function StrategyTradesPanel({ strategy, trades, loading, onClose, onRefresh }: 
                                 {profit ? (
                                   <div>
                                     <div className={`text-sm font-mono font-semibold ${profit.profitDollar >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                      {profit.profitDollar >= 0 ? '+' : ''}${profit.profitDollar.toFixed(2)}
+                                      {profit.profitDollar >= 0 ? '+' : ''}${safeToFixed(profit.profitDollar, 2)}
                                     </div>
                                     <div className={`text-xs font-mono ${profit.profitPercent >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                      {profit.profitPercent >= 0 ? '+' : ''}{profit.profitPercent.toFixed(2)}%
+                                      {profit.profitPercent >= 0 ? '+' : ''}{safeToFixed(profit.profitPercent, 2)}%
                                     </div>
                                   </div>
                                 ) : (
