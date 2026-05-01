@@ -144,6 +144,7 @@ export function BrokersPage() {
     } catch (err) {
       console.error('Error disconnecting broker:', err);
     }
+    localStorage.removeItem('selectedBrokerId');
   };
 
   if (loading) {

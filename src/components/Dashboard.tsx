@@ -250,6 +250,19 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
       const alpacaBrokers = brokers.filter(
         (broker: any) => isAlpacaBroker(broker) && broker.connected !== false
       );
+      const selectedBrokerStillExists = alpacaBrokers.some(
+      (broker: any) => broker.id === selectedBrokerId
+        );
+
+        if (alpacaBrokers.length === 0) {
+          setSelectedBrokerId('');
+          await loadDefaultData(false);
+          return;
+        }
+
+if (!selectedBrokerId || !selectedBrokerStillExists) {
+  setSelectedBrokerId(alpacaBrokers[0].id);
+}
 
       console.log('📊 Dashboard: Loaded brokers:', brokers);
       console.log('📊 Dashboard: Filtered Alpaca brokers:', alpacaBrokers);
@@ -264,7 +277,10 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
         setSelectedBrokerId(alpacaBrokers[0].id);
       }
 
-      const activeBrokerId = selectedBrokerId || alpacaBrokers[0].id;
+      const activeBrokerId =
+        selectedBrokerStillExists && selectedBrokerId
+      ? selectedBrokerId
+      : alpacaBrokers[0].id;
 
       try {
         const params = getEquityHistoryParams(selectedTimeframe);
