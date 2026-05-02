@@ -5,6 +5,12 @@ const BASE_URL = `https://${projectId}.supabase.co/functions/v1/webhook-listener
 let accessToken: string | null =
   typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
 
+let authErrorCallback: (() => void) | null = null;
+
+/* =========================
+   AUTH TOKEN MANAGEMENT
+========================= */
+
 export function setAccessToken(token: string | null) {
   accessToken = token;
 
@@ -23,6 +29,22 @@ export function getAccessToken() {
   return null;
 }
 
+export function clearAccessToken() {
+  accessToken = null;
+
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem('access_token');
+  }
+}
+
+export function setAuthErrorCallback(callback: (() => void) | null) {
+  authErrorCallback = callback;
+}
+
+/* =========================
+   CORE REQUEST WRAPPER
+========================= */
+
 export async function apiRequest(path: string, options: RequestInit = {}) {
   const token = getAccessToken();
 
@@ -39,6 +61,12 @@ export async function apiRequest(path: string, options: RequestInit = {}) {
 
   if (!response.ok) {
     console.error(`API Error on ${path}:`, data);
+
+    if (response.status === 401) {
+      clearAccessToken();
+      if (authErrorCallback) authErrorCallback();
+    }
+
     throw new Error(data?.error || data?.message || `API error ${response.status}`);
   }
 
