@@ -10,6 +10,7 @@ import {
 } from './CustomIcons';
 import { CustomAreaChart } from './CustomAreaChart';
 import { dashboardAPI, alpacaAPI, brokersAPI } from '../utils/api';
+import { TradeAssistant } from './TradeAssistant';
 
 interface DashboardProps {
   onNavigate?: (screen: string) => void;
@@ -194,28 +195,27 @@ function normalizePositions(raw: any): any[] {
 function normalizeOrders(raw: any): any[] {
   if (!Array.isArray(raw)) return [];
 
-  return raw
-    .filter((order: any) => !order.status || order.status === 'filled')
-    .map((order: any) => {
-      const filledTime = order.filled_at || order.updated_at || order.created_at || new Date().toISOString();
-      const date = new Date(filledTime);
+  return raw.map((order: any) => {
+    const filledTime = order.filled_at || order.updated_at || order.created_at || new Date().toISOString();
+    const date = new Date(filledTime);
 
-      return {
-        time: date.toLocaleString('en-US', {
-          month: '2-digit',
-          day: '2-digit',
-          year: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-          hour12: false,
-        }),
-        action: String(order.action || order.side || 'BUY').toUpperCase(),
-        symbol: order.symbol || 'N/A',
-        qty: safeNumber(order.qty ?? order.filled_qty),
-        price: safeNumber(order.price ?? order.filled_avg_price),
-      };
-    });
+    return {
+      time: date.toLocaleString('en-US', {
+        month: '2-digit',
+        day: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      }),
+      action: String(order.action || order.side || 'BUY').toUpperCase(),
+      symbol: order.symbol || 'N/A',
+      qty: safeNumber(order.qty ?? order.filled_qty ?? order.quantity),
+      price: safeNumber(order.price ?? order.filled_avg_price ?? order.entry_price),
+      status: order.status || 'unknown',
+    };
+  });
 }
 
 export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }: DashboardProps) {
@@ -250,37 +250,29 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
       const alpacaBrokers = brokers.filter(
         (broker: any) => isAlpacaBroker(broker) && broker.connected !== false
       );
+
       const selectedBrokerStillExists = alpacaBrokers.some(
-      (broker: any) => broker.id === selectedBrokerId
-        );
-
-        if (alpacaBrokers.length === 0) {
-          setSelectedBrokerId('');
-          await loadDefaultData(false);
-          return;
-        }
-
-if (!selectedBrokerId || !selectedBrokerStillExists) {
-  setSelectedBrokerId(alpacaBrokers[0].id);
-}
+        (broker: any) => broker.id === selectedBrokerId
+      );
 
       console.log('📊 Dashboard: Loaded brokers:', brokers);
       console.log('📊 Dashboard: Filtered Alpaca brokers:', alpacaBrokers);
       console.log('📊 Dashboard: Alpaca broker count:', alpacaBrokers.length);
 
       if (alpacaBrokers.length === 0) {
+        setSelectedBrokerId('');
         await loadDefaultData(false);
         return;
       }
 
-      if (!selectedBrokerId) {
+      if (!selectedBrokerId || !selectedBrokerStillExists) {
         setSelectedBrokerId(alpacaBrokers[0].id);
       }
 
       const activeBrokerId =
         selectedBrokerStillExists && selectedBrokerId
-      ? selectedBrokerId
-      : alpacaBrokers[0].id;
+          ? selectedBrokerId
+          : alpacaBrokers[0].id;
 
       try {
         const params = getEquityHistoryParams(selectedTimeframe);
@@ -352,9 +344,7 @@ if (!selectedBrokerId || !selectedBrokerStillExists) {
         activeAlerts: safeNumber(metricsData?.activeAlerts),
       });
 
-      const normalizedEquity = normalizeEquityData(equityCurveData);
-      setEquityData(normalizedEquity);
-
+      setEquityData(normalizeEquityData(equityCurveData));
       setPositions(normalizePositions(positionsData));
       setRecentOrders(normalizeOrders(recentOrdersData));
       setHasBrokerConnected(brokerStillConnected);
@@ -390,6 +380,10 @@ if (!selectedBrokerId || !selectedBrokerStillExists) {
 
   return (
     <div className="min-h-screen bg-[#0f172a] mx-auto max-w-[1600px] px-6 py-8">
+      <div className="mb-6">
+        <TradeAssistant selectedBrokerId={selectedBrokerId} onOrderSubmitted={loadDashboardData} />
+      </div>
+
       {!hasBrokerConnected && (
         <div className="mb-8 rounded-xl border border-blue-500/30 bg-blue-500/10 p-6 backdrop-blur-sm">
           <div className="flex items-start gap-4">
