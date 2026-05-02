@@ -296,7 +296,6 @@ export const notificationsAPI = {
       body: JSON.stringify(payload),
     }),
 };
-
 /* =========================
    TRADE ASSISTANT
 ========================= */
@@ -319,3 +318,13 @@ export const tradeAssistantAPI = {
       }),
     }),
 };
+
+/* =========================
+   WEBHOOK TEST HELPER
+========================= */
+
+export const testWebhook = (payload: any = {}) =>
+  apiRequest('/test-webhook', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
