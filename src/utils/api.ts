@@ -119,11 +119,8 @@ export const brokersAPI = {
 
 export const dashboardAPI = {
   getMetrics: () => apiRequest('/dashboard/metrics', { method: 'GET' }),
-
   getEquityCurve: () => apiRequest('/dashboard/equity-curve', { method: 'GET' }),
-
   getPositions: () => apiRequest('/dashboard/positions', { method: 'GET' }),
-
   getRecentOrders: () => apiRequest('/dashboard/recent-orders', { method: 'GET' }),
 };
 
@@ -161,6 +158,12 @@ export const alpacaAPI = {
 
   getQuote: (symbol: string) =>
     apiRequest(`/alpaca/quote/${encodeURIComponent(symbol)}`, { method: 'GET' }),
+
+  getQuotes: (symbols: string[]) =>
+    apiRequest('/alpaca/quotes', {
+      method: 'POST',
+      body: JSON.stringify({ symbols }),
+    }),
 };
 
 /* =========================
@@ -205,6 +208,11 @@ export const strategiesAPI = {
 
   syncTrades: (id: string) =>
     apiRequest(`/strategies/${id}/sync-trades`, {
+      method: 'POST',
+    }),
+
+  clearRiskSettings: () =>
+    apiRequest('/strategies/clear-risk-settings', {
       method: 'POST',
     }),
 };
@@ -255,7 +263,18 @@ export const webhooksAPI = {
     apiRequest('/webhooks/all/events', {
       method: 'GET',
     }),
+
+  backfillEvents: () =>
+    apiRequest('/backfill-webhook-events', {
+      method: 'POST',
+    }),
 };
+
+export const testWebhook = (payload: any = {}) =>
+  apiRequest('/test-webhook', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
 
 /* =========================
    NOTIFICATIONS
@@ -295,7 +314,46 @@ export const notificationsAPI = {
       method: 'PUT',
       body: JSON.stringify(payload),
     }),
+
+  getSettings: () =>
+    apiRequest('/notification-settings', {
+      method: 'GET',
+    }),
+
+  updateSettings: (payload: any) =>
+    apiRequest('/notification-settings', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
 };
+
+/* =========================
+   ANALYTICS
+========================= */
+
+export const analyticsAPI = {
+  getPortfolio: () => apiRequest('/analytics/portfolio', { method: 'GET' }),
+  getMetrics: () => apiRequest('/analytics/portfolio', { method: 'GET' }),
+  getPerformance: () => apiRequest('/analytics/portfolio', { method: 'GET' }),
+  getTradeStats: () => apiRequest('/analytics/portfolio', { method: 'GET' }),
+};
+
+/* =========================
+   MCP
+========================= */
+
+export const mcpAPI = {
+  getTools: () => apiRequest('/mcp/tools', { method: 'GET' }),
+
+  execute: (payload: any) =>
+    apiRequest('/mcp/execute', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  getInfo: () => apiRequest('/mcp/info', { method: 'GET' }),
+};
+
 /* =========================
    TRADE ASSISTANT
 ========================= */
@@ -318,13 +376,3 @@ export const tradeAssistantAPI = {
       }),
     }),
 };
-
-/* =========================
-   WEBHOOK TEST HELPER
-========================= */
-
-export const testWebhook = (payload: any = {}) =>
-  apiRequest('/test-webhook', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
