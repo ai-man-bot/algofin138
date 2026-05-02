@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { alpacaAPI, brokersAPI, webhooksAPI } from '../utils/api';
+import { normalizeBrokerConnections } from '../utils/brokerModels';
 import { NewOpenTradesTable, OrdersTable } from './NewTables';
 import { calculatePerformanceMetricsFromPairs, createTradingPairs } from '../utils/tradeAnalytics';
 
@@ -142,46 +143,8 @@ const safeNumber = (value: any, fallback = 0) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
-const normalizeBroker = (broker: any) => {
-  const brokerType =
-    broker?.brokerType ||
-    broker?.broker_type ||
-    broker?.provider ||
-    broker?.type ||
-    'alpaca';
-
-  const accountId =
-    broker?.accountId ||
-    broker?.account_id ||
-    broker?.metadata?.account?.id ||
-    broker?.metadata?.account?.account_number ||
-    'N/A';
-
-  const connectedAt =
-    broker?.connectedAt ||
-    broker?.connected_at ||
-    broker?.created_at ||
-    null;
-
-  const connected =
-    broker?.connected === true ||
-    broker?.status === 'connected' ||
-    broker?.status === 'active';
-
-  return {
-    ...broker,
-    brokerType,
-    accountId,
-    connectedAt,
-    connected,
-    status: connected ? 'connected' : broker?.status,
-    displayName: broker?.name || brokerType,
-  };
-};
-
 const isAlpacaBroker = (broker: any) => {
-  const brokerType = broker?.brokerType || broker?.broker_type || broker?.provider || broker?.type;
-  return brokerType === 'alpaca' || broker?.id === 'alpaca' || (typeof broker?.id === 'string' && broker.id.startsWith('alpaca:'));
+  return broker?.provider === 'alpaca' || broker?.brokerType === 'alpaca';
 };
 
 export function TradesTab({ selectedBrokerId, setSelectedBrokerId }: TradesTabProps) {
@@ -213,7 +176,7 @@ export function TradesTab({ selectedBrokerId, setSelectedBrokerId }: TradesTabPr
       
       // Load connected brokers
       const brokerRows = await brokersAPI.getAll();
-      const brokers = (Array.isArray(brokerRows) ? brokerRows : []).map(normalizeBroker);
+      const brokers = normalizeBrokerConnections(Array.isArray(brokerRows) ? brokerRows : []);
       console.log('📊 TradesTab: Loaded brokers:', brokers);
       setConnectedBrokers(brokers);
       

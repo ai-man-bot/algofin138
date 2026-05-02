@@ -10,6 +10,12 @@ import {
 } from './CustomIcons';
 import { CustomAreaChart } from './CustomAreaChart';
 import { dashboardAPI, alpacaAPI, brokersAPI } from '../utils/api';
+import {
+  normalizeAlpacaAccount,
+  normalizeAlpacaOrders,
+  normalizeAlpacaPositions,
+  normalizeBrokerConnections,
+} from '../utils/brokerModels';
 import { TradeAssistant } from './TradeAssistant';
 
 interface DashboardProps {
@@ -39,51 +45,8 @@ const formatCurrency = (value: any) =>
 
 const formatPercent = (value: any) => `${safeNumber(value).toFixed(2)}%`;
 
-function normalizeBroker(broker: any) {
-  const brokerType =
-    broker?.brokerType ||
-    broker?.broker_type ||
-    broker?.provider ||
-    broker?.type ||
-    'alpaca';
-
-  const accountId =
-    broker?.accountId ||
-    broker?.account_id ||
-    broker?.metadata?.account?.id ||
-    broker?.metadata?.account?.account_number ||
-    'N/A';
-
-  const connectedAt =
-    broker?.connectedAt ||
-    broker?.connected_at ||
-    broker?.created_at ||
-    null;
-
-  const connected =
-    broker?.connected === true ||
-    broker?.status === 'connected' ||
-    broker?.status === 'active';
-
-  return {
-    ...broker,
-    brokerType,
-    accountId,
-    connectedAt,
-    connected,
-    status: connected ? 'connected' : broker?.status,
-    displayName: broker?.name || brokerType,
-  };
-}
-
 function isAlpacaBroker(broker: any) {
-  const brokerType =
-    broker?.brokerType ||
-    broker?.broker_type ||
-    broker?.provider ||
-    broker?.type;
-
-  return brokerType === 'alpaca';
+  return broker?.provider === 'alpaca' || broker?.brokerType === 'alpaca';
 }
 
 function toDateInputValue(date: Date) {
@@ -181,22 +144,18 @@ function normalizeEquityData(raw: any): EquityDataPoint[] {
 }
 
 function normalizePositions(raw: any): any[] {
-  if (!Array.isArray(raw)) return [];
-
-  return raw.map((pos: any) => ({
-    asset: pos.asset || pos.symbol || 'N/A',
-    price: safeNumber(pos.price ?? pos.current_price ?? pos.market_value),
-    qty: safeNumber(pos.qty ?? pos.quantity),
-    pl: safeNumber(pos.pl ?? pos.unrealized_pl),
-    plPercent: safeNumber(pos.plPercent ?? pos.unrealized_plpc) * 100,
+  return normalizeAlpacaPositions(raw).map((position) => ({
+    asset: position.symbol || 'N/A',
+    price: position.currentPrice,
+    qty: position.quantity,
+    pl: position.unrealizedPnL,
+    plPercent: position.unrealizedPnLPercent,
   }));
 }
 
 function normalizeOrders(raw: any): any[] {
-  if (!Array.isArray(raw)) return [];
-
-  return raw.map((order: any) => {
-    const filledTime = order.filled_at || order.updated_at || order.created_at || new Date().toISOString();
+  return normalizeAlpacaOrders(raw).map((order) => {
+    const filledTime = order.filledAt || order.updatedAt || order.createdAt || new Date().toISOString();
     const date = new Date(filledTime);
 
     return {
@@ -209,10 +168,10 @@ function normalizeOrders(raw: any): any[] {
         second: '2-digit',
         hour12: false,
       }),
-      action: String(order.action || order.side || 'BUY').toUpperCase(),
+      action: String(order.side || 'buy').toUpperCase(),
       symbol: order.symbol || 'N/A',
-      qty: safeNumber(order.qty ?? order.filled_qty ?? order.quantity),
-      price: safeNumber(order.price ?? order.filled_avg_price ?? order.entry_price),
+      qty: order.filledQuantity || order.quantity,
+      price: order.averageFillPrice || order.limitPrice || order.stopPrice,
       status: order.status || 'unknown',
     };
   });
@@ -244,7 +203,7 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
       setLoading(true);
 
       const brokerRows = await brokersAPI.getAll();
-      const brokers = (brokerRows || []).map(normalizeBroker);
+      const brokers = normalizeBrokerConnections(Array.isArray(brokerRows) ? brokerRows : []);
       setConnectedBrokers(brokers);
 
       const alpacaBrokers = brokers.filter(
@@ -292,17 +251,13 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
           alpacaAPI.getOrders(activeBrokerId, 'all', 10).catch(() => []),
         ]);
 
-        const equity = safeNumber(accountData?.equity ?? accountData?.totalEquity);
-        const lastEquity = safeNumber(accountData?.last_equity ?? accountData?.lastEquity ?? equity);
-        const buyingPower = safeNumber(accountData?.buying_power ?? accountData?.buyingPower);
-        const dayChange = equity - lastEquity;
-        const dayChangePercent = lastEquity > 0 ? (dayChange / lastEquity) * 100 : 0;
+        const normalizedAccount = normalizeAlpacaAccount(accountData || {});
 
         setMetrics({
-          totalEquity: equity,
-          buyingPower,
-          dayChange,
-          dayChangePercent,
+          totalEquity: normalizedAccount.equity,
+          buyingPower: normalizedAccount.buyingPower,
+          dayChange: normalizedAccount.dayChange,
+          dayChangePercent: normalizedAccount.dayChangePercent,
           activeAlerts: safeNumber(accountData?.activeAlerts),
         });
 
@@ -311,7 +266,9 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
 
         const normalizedEquity = normalizeEquityData(portfolioHistory);
         setEquityData(
-          normalizedEquity.length > 0 ? normalizedEquity : buildFallbackEquitySeries(equity)
+          normalizedEquity.length > 0
+            ? normalizedEquity
+            : buildFallbackEquitySeries(normalizedAccount.equity)
         );
 
         setHasBrokerConnected(true);

@@ -168,17 +168,30 @@ function buildBrokerCapabilities(provider: BrokerProvider): BrokerCapabilities {
 
 export function normalizeBrokerConnection(broker: any): NormalizedBrokerConnection {
   const provider = resolveBrokerProvider(broker);
-  const connected = Boolean(broker?.connected);
+  const connected =
+    broker?.connected === true ||
+    String(broker?.status || '').toLowerCase() === 'connected' ||
+    String(broker?.status || '').toLowerCase() === 'active';
+  const brokerType = String(
+    broker?.brokerType || broker?.broker_type || broker?.provider || broker?.type || provider,
+  );
+  const accountId = String(
+    broker?.accountId ||
+      broker?.account_id ||
+      broker?.metadata?.account?.id ||
+      broker?.metadata?.account?.account_number ||
+      '',
+  );
 
   return {
     id: String(broker?.id || `${provider}:unknown`),
     provider,
-    brokerType: String(broker?.brokerType || provider),
-    name: String(broker?.name || broker?.displayName || broker?.id || 'Broker'),
-    accountId: String(broker?.accountId || broker?.account_id || ''),
+    brokerType,
+    name: String(broker?.name || broker?.displayName || brokerType || broker?.id || 'Broker'),
+    accountId,
     status: connected ? 'connected' : 'disconnected',
     connected,
-    connectedAt: broker?.connectedAt || broker?.connected_at || null,
+    connectedAt: broker?.connectedAt || broker?.connected_at || broker?.created_at || null,
     capabilities: buildBrokerCapabilities(provider),
     raw: broker,
   };

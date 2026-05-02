@@ -1,4 +1,5 @@
 import './requestCache.test.ts';
+import './apiCache.test.ts';
 import './brokerModels.test.ts';
 import assert from 'node:assert/strict';
 import {

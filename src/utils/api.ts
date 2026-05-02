@@ -1,6 +1,26 @@
-import { projectId } from './supabase/info';
+import { projectId } from './supabase/info.ts';
+import { requestCache } from './requestCache.ts';
 
 const BASE_URL = `https://${projectId}.supabase.co/functions/v1/webhook-listener`;
+
+const DEFAULT_CACHE_TTL_MS = 15_000;
+const SLOW_REQUEST_THRESHOLD_MS = 1_000;
+
+type CachedRequestOptions = RequestInit & {
+  ttlMs?: number;
+  forceRefresh?: boolean;
+};
+
+type RequestMetric = {
+  path: string;
+  method: string;
+  durationMs: number;
+  ok: boolean;
+  status: number;
+  timestamp: number;
+};
+
+const requestMetrics = new Map<string, RequestMetric>();
 
 let accessToken: string | null =
   typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
@@ -31,6 +51,7 @@ export function getAccessToken() {
 
 export function clearAccessToken() {
   accessToken = null;
+  requestCache.clear();
 
   if (typeof window !== 'undefined') {
     localStorage.removeItem('access_token');
@@ -41,12 +62,37 @@ export function setAuthErrorCallback(callback: (() => void) | null) {
   authErrorCallback = callback;
 }
 
-/* =========================
-   CORE REQUEST WRAPPER
-========================= */
+export function getRequestMetrics() {
+  return Array.from(requestMetrics.values()).sort((a, b) => b.timestamp - a.timestamp);
+}
 
-export async function apiRequest(path: string, options: RequestInit = {}) {
+function recordRequestMetric(metric: RequestMetric) {
+  requestMetrics.set(`${metric.method}:${metric.path}`, metric);
+
+  if (metric.durationMs >= SLOW_REQUEST_THRESHOLD_MS) {
+    console.info(
+      `[api] slow ${metric.method} ${metric.path} ${metric.durationMs.toFixed(0)}ms (status ${metric.status})`,
+    );
+  }
+}
+
+function buildCacheKey(path: string) {
+  const token = getAccessToken() || 'anonymous';
+  return `${token}:${path}`;
+}
+
+function invalidateCache(prefixes: string[]) {
+  const token = getAccessToken() || 'anonymous';
+
+  for (const prefix of prefixes) {
+    requestCache.invalidate(`${token}:${prefix}`);
+  }
+}
+
+async function requestJson(path: string, options: RequestInit = {}) {
   const token = getAccessToken();
+  const method = String(options.method || 'GET').toUpperCase();
+  const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
 
   const response = await fetch(`${BASE_URL}${path}`, {
     ...options,
@@ -57,7 +103,19 @@ export async function apiRequest(path: string, options: RequestInit = {}) {
     },
   });
 
+  const finishedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  const durationMs = finishedAt - startedAt;
+
   const data = await response.json().catch(() => null);
+
+  recordRequestMetric({
+    path,
+    method,
+    durationMs,
+    ok: response.ok,
+    status: response.status,
+    timestamp: Date.now(),
+  });
 
   if (!response.ok) {
     console.error(`API Error on ${path}:`, data);
@@ -74,11 +132,46 @@ export async function apiRequest(path: string, options: RequestInit = {}) {
 }
 
 /* =========================
+   CORE REQUEST WRAPPER
+========================= */
+
+export async function apiRequest(path: string, options: RequestInit = {}) {
+  return requestJson(path, options);
+}
+
+async function cachedApiRequest(path: string, options: CachedRequestOptions = {}) {
+  const method = String(options.method || 'GET').toUpperCase();
+
+  if (method !== 'GET') {
+    return requestJson(path, options);
+  }
+
+  const { ttlMs = DEFAULT_CACHE_TTL_MS, forceRefresh = false, ...requestOptions } = options;
+
+  return requestCache.load(
+    buildCacheKey(path),
+    () => requestJson(path, requestOptions),
+    { ttlMs, forceRefresh },
+  );
+}
+
+function mutate(path: string, options: RequestInit, invalidatePrefixes: string[] = []) {
+  return requestJson(path, options).then((result) => {
+    if (invalidatePrefixes.length > 0) {
+      invalidateCache(invalidatePrefixes);
+    }
+
+    return result;
+  });
+}
+
+/* =========================
    BROKERS
 ========================= */
 
 export const brokersAPI = {
-  getAll: () => apiRequest('/brokers', { method: 'GET' }),
+  getAll: (options: CachedRequestOptions = {}) =>
+    cachedApiRequest('/brokers', { method: 'GET', ttlMs: 30_000, ...options }),
 
   connect: (
     brokerTypeOrPayload: any,
@@ -101,16 +194,16 @@ export const brokersAPI = {
             paper,
           };
 
-    return apiRequest('/brokers', {
+    return mutate('/brokers', {
       method: 'POST',
       body: JSON.stringify(payload),
-    });
+    }, ['/brokers', '/dashboard', '/alpaca']);
   },
 
   disconnect: (id: string) =>
-    apiRequest(`/brokers/${id}`, {
+    mutate(`/brokers/${id}`, {
       method: 'DELETE',
-    }),
+    }, ['/brokers', '/dashboard', '/alpaca']),
 };
 
 /* =========================
@@ -118,10 +211,14 @@ export const brokersAPI = {
 ========================= */
 
 export const dashboardAPI = {
-  getMetrics: () => apiRequest('/dashboard/metrics', { method: 'GET' }),
-  getEquityCurve: () => apiRequest('/dashboard/equity-curve', { method: 'GET' }),
-  getPositions: () => apiRequest('/dashboard/positions', { method: 'GET' }),
-  getRecentOrders: () => apiRequest('/dashboard/recent-orders', { method: 'GET' }),
+  getMetrics: (options: CachedRequestOptions = {}) =>
+    cachedApiRequest('/dashboard/metrics', { method: 'GET', ...options }),
+  getEquityCurve: (options: CachedRequestOptions = {}) =>
+    cachedApiRequest('/dashboard/equity-curve', { method: 'GET', ...options }),
+  getPositions: (options: CachedRequestOptions = {}) =>
+    cachedApiRequest('/dashboard/positions', { method: 'GET', ...options }),
+  getRecentOrders: (options: CachedRequestOptions = {}) =>
+    cachedApiRequest('/dashboard/recent-orders', { method: 'GET', ...options }),
 };
 
 /* =========================
@@ -129,14 +226,18 @@ export const dashboardAPI = {
 ========================= */
 
 export const alpacaAPI = {
-  getAccount: (_brokerId?: string) =>
-    apiRequest('/alpaca/account', { method: 'GET' }),
+  getAccount: (_brokerId?: string, options: CachedRequestOptions = {}) =>
+    cachedApiRequest('/alpaca/account', { method: 'GET', ttlMs: 10_000, ...options }),
 
-  getPositions: (_brokerId?: string) =>
-    apiRequest('/alpaca/positions', { method: 'GET' }),
+  getPositions: (_brokerId?: string, options: CachedRequestOptions = {}) =>
+    cachedApiRequest('/alpaca/positions', { method: 'GET', ttlMs: 10_000, ...options }),
 
-  getOrders: (_brokerId?: string, status = 'all', limit = 50) =>
-    apiRequest(`/alpaca/orders?status=${status}&limit=${limit}`, { method: 'GET' }),
+  getOrders: (_brokerId?: string, status = 'all', limit = 50, options: CachedRequestOptions = {}) =>
+    cachedApiRequest(`/alpaca/orders?status=${status}&limit=${limit}`, {
+      method: 'GET',
+      ttlMs: 10_000,
+      ...options,
+    }),
 
   getPortfolioHistory: (
     _brokerId?: string,
@@ -151,16 +252,21 @@ export const alpacaAPI = {
     if (startDate) params.set('startDate', startDate);
     if (endDate) params.set('endDate', endDate);
 
-    return apiRequest(`/alpaca/portfolio-history?${params.toString()}`, {
+    return cachedApiRequest(`/alpaca/portfolio-history?${params.toString()}`, {
       method: 'GET',
+      ttlMs: 30_000,
     });
   },
 
-  getQuote: (symbol: string) =>
-    apiRequest(`/alpaca/quote/${encodeURIComponent(symbol)}`, { method: 'GET' }),
+  getQuote: (symbol: string, options: CachedRequestOptions = {}) =>
+    cachedApiRequest(`/alpaca/quote/${encodeURIComponent(symbol)}`, {
+      method: 'GET',
+      ttlMs: 5_000,
+      ...options,
+    }),
 
   getQuotes: (symbols: string[]) =>
-    apiRequest('/alpaca/quotes', {
+    requestJson('/alpaca/quotes', {
       method: 'POST',
       body: JSON.stringify({ symbols }),
     }),
@@ -171,50 +277,47 @@ export const alpacaAPI = {
 ========================= */
 
 export const strategiesAPI = {
-  getAll: () => apiRequest('/strategies', { method: 'GET' }),
+  getAll: (options: CachedRequestOptions = {}) =>
+    cachedApiRequest('/strategies', { method: 'GET', ttlMs: 30_000, ...options }),
 
   create: (payload: any) =>
-    apiRequest('/strategies', {
+    mutate('/strategies', {
       method: 'POST',
       body: JSON.stringify(payload),
-    }),
+    }, ['/strategies', '/analytics', '/trades']),
 
   update: (id: string, payload: any) =>
-    apiRequest(`/strategies/${id}`, {
+    mutate(`/strategies/${id}`, {
       method: 'PUT',
       body: JSON.stringify(payload),
-    }),
+    }, ['/strategies', '/analytics', '/trades']),
 
   delete: (id: string) =>
-    apiRequest(`/strategies/${id}`, {
+    mutate(`/strategies/${id}`, {
       method: 'DELETE',
-    }),
+    }, ['/strategies', '/analytics', '/trades']),
 
   backtest: (id: string, config: any) =>
-    apiRequest(`/strategies/${id}/backtest`, {
+    requestJson(`/strategies/${id}/backtest`, {
       method: 'POST',
       body: JSON.stringify(config),
     }),
 
-  getBacktests: (id: string) =>
-    apiRequest(`/strategies/${id}/backtests`, {
-      method: 'GET',
-    }),
+  getBacktests: (id: string, options: CachedRequestOptions = {}) =>
+    cachedApiRequest(`/strategies/${id}/backtests`, { method: 'GET', ttlMs: 30_000, ...options }),
 
-  getTrades: (id: string) =>
-    apiRequest(`/strategies/${id}/trades`, {
-      method: 'GET',
-    }),
+  getTrades: (id: string, options: CachedRequestOptions = {}) =>
+    cachedApiRequest(`/strategies/${id}/trades`, { method: 'GET', ttlMs: 10_000, ...options }),
 
   syncTrades: (id: string) =>
-    apiRequest(`/strategies/${id}/sync-trades`, {
+    mutate(`/strategies/${id}/sync-trades`, {
       method: 'POST',
-    }),
+    }, ['/strategies', '/trades', '/analytics', '/dashboard']),
 
   clearRiskSettings: () =>
-    apiRequest('/strategies/clear-risk-settings', {
+    mutate('/strategies/clear-risk-settings', {
       method: 'POST',
-    }),
+    }, ['/strategies']),
 };
 
 /* =========================
@@ -222,18 +325,19 @@ export const strategiesAPI = {
 ========================= */
 
 export const tradesAPI = {
-  getAll: () => apiRequest('/trades', { method: 'GET' }),
+  getAll: (options: CachedRequestOptions = {}) =>
+    cachedApiRequest('/trades', { method: 'GET', ttlMs: 10_000, ...options }),
 
   create: (payload: any) =>
-    apiRequest('/trades', {
+    mutate('/trades', {
       method: 'POST',
       body: JSON.stringify(payload),
-    }),
+    }, ['/trades', '/analytics', '/dashboard']),
 
   syncAll: () =>
-    apiRequest('/trades/sync-all', {
+    mutate('/trades/sync-all', {
       method: 'POST',
-    }),
+    }, ['/trades', '/analytics', '/dashboard']),
 };
 
 /* =========================
@@ -241,33 +345,30 @@ export const tradesAPI = {
 ========================= */
 
 export const webhooksAPI = {
-  getAll: () => apiRequest('/webhooks', { method: 'GET' }),
+  getAll: (options: CachedRequestOptions = {}) =>
+    cachedApiRequest('/webhooks', { method: 'GET', ttlMs: 30_000, ...options }),
 
   create: (payload: any) =>
-    apiRequest('/webhooks', {
+    mutate('/webhooks', {
       method: 'POST',
       body: JSON.stringify(payload),
-    }),
+    }, ['/webhooks']),
 
   delete: (id: string) =>
-    apiRequest(`/webhooks/${id}`, {
+    mutate(`/webhooks/${id}`, {
       method: 'DELETE',
-    }),
+    }, ['/webhooks']),
 
-  getEvents: (id: string) =>
-    apiRequest(`/webhooks/${id}/events`, {
-      method: 'GET',
-    }),
+  getEvents: (id: string, options: CachedRequestOptions = {}) =>
+    cachedApiRequest(`/webhooks/${id}/events`, { method: 'GET', ttlMs: 10_000, ...options }),
 
-  getAllEvents: () =>
-    apiRequest('/webhooks/all/events', {
-      method: 'GET',
-    }),
+  getAllEvents: (options: CachedRequestOptions = {}) =>
+    cachedApiRequest('/webhooks/all/events', { method: 'GET', ttlMs: 10_000, ...options }),
 
   backfillEvents: () =>
-    apiRequest('/backfill-webhook-events', {
+    mutate('/backfill-webhook-events', {
       method: 'POST',
-    }),
+    }, ['/webhooks']),
 };
 
 export const testWebhook = (payload: any = {}) =>
@@ -281,50 +382,47 @@ export const testWebhook = (payload: any = {}) =>
 ========================= */
 
 export const notificationsAPI = {
-  getAll: () => apiRequest('/notifications', { method: 'GET' }),
+  getAll: (options: CachedRequestOptions = {}) =>
+    cachedApiRequest('/notifications', { method: 'GET', ttlMs: 10_000, ...options }),
 
   create: (payload: any) =>
-    apiRequest('/notifications', {
+    mutate('/notifications', {
       method: 'POST',
       body: JSON.stringify(payload),
-    }),
+    }, ['/notifications', '/notification-settings']),
 
   markRead: (id: string) =>
-    apiRequest(`/notifications/${id}/read`, {
+    mutate(`/notifications/${id}/read`, {
       method: 'PUT',
-    }),
+    }, ['/notifications']),
 
   markAllRead: () =>
-    apiRequest('/notifications/mark-all-read', {
+    mutate('/notifications/mark-all-read', {
       method: 'POST',
-    }),
+    }, ['/notifications']),
 
   delete: (id: string) =>
-    apiRequest(`/notifications/${id}`, {
+    mutate(`/notifications/${id}`, {
       method: 'DELETE',
-    }),
+    }, ['/notifications']),
 
-  getPreferences: () =>
-    apiRequest('/notifications/preferences', {
-      method: 'GET',
-    }),
+  getPreferences: (options: CachedRequestOptions = {}) =>
+    cachedApiRequest('/notifications/preferences', { method: 'GET', ttlMs: 30_000, ...options }),
 
   updatePreferences: (payload: any) =>
-    apiRequest('/notifications/preferences', {
+    mutate('/notifications/preferences', {
       method: 'PUT',
       body: JSON.stringify(payload),
-    }),
+    }, ['/notifications/preferences']),
 
-  getSettings: () =>
-    apiRequest('/notification-settings', {
-      method: 'GET',
-    }),
+  getSettings: (options: CachedRequestOptions = {}) =>
+    cachedApiRequest('/notification-settings', { method: 'GET', ttlMs: 30_000, ...options }),
 
   updateSettings: (payload: any) =>
-    apiRequest('/notification-settings', {
+    mutate('/notification-settings', {
       method: 'POST',
       body: JSON.stringify(payload),
-    }),
+    }, ['/notification-settings']),
 };
 
 /* =========================
@@ -332,10 +430,14 @@ export const notificationsAPI = {
 ========================= */
 
 export const analyticsAPI = {
-  getPortfolio: () => apiRequest('/analytics/portfolio', { method: 'GET' }),
-  getMetrics: () => apiRequest('/analytics/portfolio', { method: 'GET' }),
-  getPerformance: () => apiRequest('/analytics/portfolio', { method: 'GET' }),
-  getTradeStats: () => apiRequest('/analytics/portfolio', { method: 'GET' }),
+  getPortfolio: (options: CachedRequestOptions = {}) =>
+    cachedApiRequest('/analytics/portfolio', { method: 'GET', ttlMs: 10_000, ...options }),
+  getMetrics: (options: CachedRequestOptions = {}) =>
+    cachedApiRequest('/analytics/portfolio', { method: 'GET', ttlMs: 10_000, ...options }),
+  getPerformance: (options: CachedRequestOptions = {}) =>
+    cachedApiRequest('/analytics/portfolio', { method: 'GET', ttlMs: 10_000, ...options }),
+  getTradeStats: (options: CachedRequestOptions = {}) =>
+    cachedApiRequest('/analytics/portfolio', { method: 'GET', ttlMs: 10_000, ...options }),
 };
 
 /* =========================
@@ -343,7 +445,8 @@ export const analyticsAPI = {
 ========================= */
 
 export const mcpAPI = {
-  getTools: () => apiRequest('/mcp/tools', { method: 'GET' }),
+  getTools: (options: CachedRequestOptions = {}) =>
+    cachedApiRequest('/mcp/tools', { method: 'GET', ttlMs: 30_000, ...options }),
 
   execute: (payload: any) =>
     apiRequest('/mcp/execute', {
@@ -351,7 +454,8 @@ export const mcpAPI = {
       body: JSON.stringify(payload),
     }),
 
-  getInfo: () => apiRequest('/mcp/info', { method: 'GET' }),
+  getInfo: (options: CachedRequestOptions = {}) =>
+    cachedApiRequest('/mcp/info', { method: 'GET', ttlMs: 30_000, ...options }),
 };
 
 /* =========================
