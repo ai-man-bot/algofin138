@@ -1,5 +1,5 @@
 import { projectId } from './supabase/info.ts';
-import { requestCache } from './requestCache.ts';
+import { requestCache, type CacheSnapshot } from './requestCache.ts';
 
 const BASE_URL = `https://${projectId}.supabase.co/functions/v1/webhook-listener`;
 
@@ -19,6 +19,8 @@ type RequestMetric = {
   status: number;
   timestamp: number;
 };
+
+export type CachedRequestSnapshot<T> = CacheSnapshot<T>;
 
 const requestMetrics = new Map<string, RequestMetric>();
 
@@ -66,6 +68,10 @@ export function getRequestMetrics() {
   return Array.from(requestMetrics.values()).sort((a, b) => b.timestamp - a.timestamp);
 }
 
+export function getRequestMetric(path: string, method = 'GET') {
+  return requestMetrics.get(`${method.toUpperCase()}:${path}`) ?? null;
+}
+
 function recordRequestMetric(metric: RequestMetric) {
   requestMetrics.set(`${metric.method}:${metric.path}`, metric);
 
@@ -79,6 +85,10 @@ function recordRequestMetric(metric: RequestMetric) {
 function buildCacheKey(path: string) {
   const token = getAccessToken() || 'anonymous';
   return `${token}:${path}`;
+}
+
+export function getCachedRequestSnapshot<T>(path: string): CachedRequestSnapshot<T> | null {
+  return requestCache.peekSnapshot<T>(buildCacheKey(path)) ?? null;
 }
 
 function invalidateCache(prefixes: string[]) {
@@ -371,10 +381,14 @@ export const webhooksAPI = {
     }, ['/webhooks']),
 };
 
-export const testWebhook = (payload: any = {}) =>
+export const testWebhook = (urlOrPayload: string | any = {}, payload?: any) =>
   apiRequest('/test-webhook', {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: JSON.stringify(
+      typeof urlOrPayload === 'string'
+        ? { url: urlOrPayload, payload: payload ?? {} }
+        : urlOrPayload
+    ),
   });
 
 /* =========================
@@ -396,7 +410,17 @@ export const notificationsAPI = {
       method: 'PUT',
     }, ['/notifications']),
 
+  markAsRead: (id: string) =>
+    mutate(`/notifications/${id}/read`, {
+      method: 'PUT',
+    }, ['/notifications']),
+
   markAllRead: () =>
+    mutate('/notifications/mark-all-read', {
+      method: 'POST',
+    }, ['/notifications']),
+
+  markAllAsRead: () =>
     mutate('/notifications/mark-all-read', {
       method: 'POST',
     }, ['/notifications']),
@@ -419,6 +443,12 @@ export const notificationsAPI = {
     cachedApiRequest('/notification-settings', { method: 'GET', ttlMs: 30_000, ...options }),
 
   updateSettings: (payload: any) =>
+    mutate('/notification-settings', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, ['/notification-settings']),
+
+  saveSettings: (payload: any) =>
     mutate('/notification-settings', {
       method: 'POST',
       body: JSON.stringify(payload),

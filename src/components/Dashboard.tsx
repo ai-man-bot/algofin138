@@ -9,7 +9,7 @@ import {
   Bell,
 } from './CustomIcons';
 import { CustomAreaChart } from './CustomAreaChart';
-import { dashboardAPI, alpacaAPI, brokersAPI } from '../utils/api';
+import { dashboardAPI, alpacaAPI, brokersAPI, getRequestMetric } from '../utils/api';
 import {
   normalizeAlpacaAccount,
   normalizeAlpacaOrders,
@@ -17,6 +17,7 @@ import {
   normalizeBrokerConnections,
 } from '../utils/brokerModels';
 import { TradeAssistant } from './TradeAssistant';
+import { DataRefreshBadge } from './DataRefreshBadge';
 
 interface DashboardProps {
   onNavigate?: (screen: string) => void;
@@ -190,17 +191,24 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
   const [positions, setPositions] = useState<any[]>([]);
   const [recentOrders, setRecentOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [hasBrokerConnected, setHasBrokerConnected] = useState(false);
   const [connectedBrokers, setConnectedBrokers] = useState<any[]>([]);
   const [selectedTimeframe, setSelectedTimeframe] = useState<EquityTimeframe>('1M');
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
 
   useEffect(() => {
     loadDashboardData();
   }, [selectedBrokerId, selectedTimeframe]);
 
   const loadDashboardData = async () => {
+    const hasVisibleData = Boolean(
+      connectedBrokers.length || equityData.length || positions.length || recentOrders.length,
+    );
+
     try {
-      setLoading(true);
+      setLoading(!hasVisibleData);
+      setIsRefreshing(hasVisibleData);
 
       const brokerRows = await brokersAPI.getAll();
       const brokers = normalizeBrokerConnections(Array.isArray(brokerRows) ? brokerRows : []);
@@ -272,6 +280,7 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
         );
 
         setHasBrokerConnected(true);
+        setLastUpdatedAt(Date.now());
       } catch (alpacaError) {
         console.error('Error fetching Alpaca data:', alpacaError);
         await loadDefaultData(true);
@@ -281,6 +290,7 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
       await loadDefaultData(false);
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -305,6 +315,7 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
       setPositions(normalizePositions(positionsData));
       setRecentOrders(normalizeOrders(recentOrdersData));
       setHasBrokerConnected(brokerStillConnected);
+      setLastUpdatedAt(Date.now());
     } catch (error) {
       console.error('Error loading default data:', error);
 
@@ -320,10 +331,11 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
       setPositions([]);
       setRecentOrders([]);
       setHasBrokerConnected(brokerStillConnected);
+      setLastUpdatedAt(Date.now());
     }
   };
 
-  if (loading) {
+  if (loading && !connectedBrokers.length && !equityData.length && !positions.length && !recentOrders.length) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="text-slate-400">Loading dashboard...</div>
@@ -373,17 +385,25 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
             </div>
           </div>
 
-          <select
-            value={selectedBrokerId || alpacaBrokersForSelect[0]?.id || ''}
-            onChange={(e) => setSelectedBrokerId(e.target.value)}
-            className="rounded-lg border border-slate-700 bg-slate-800/50 px-4 py-2 text-sm text-white outline-none transition-colors focus:border-blue-500"
-          >
-            {alpacaBrokersForSelect.map((broker: any) => (
-              <option key={broker.id} value={broker.id}>
-                {broker.displayName || broker.name || 'Alpaca'} - {broker.accountId || 'N/A'}
-              </option>
-            ))}
-          </select>
+          <div className="flex items-center gap-3">
+            <DataRefreshBadge
+              isLoading={loading}
+              isRefreshing={isRefreshing}
+              updatedAt={lastUpdatedAt}
+              lastDurationMs={getRequestMetric('/alpaca/account')?.durationMs ?? getRequestMetric('/dashboard/metrics')?.durationMs ?? null}
+            />
+            <select
+              value={selectedBrokerId || alpacaBrokersForSelect[0]?.id || ''}
+              onChange={(e) => setSelectedBrokerId(e.target.value)}
+              className="rounded-lg border border-slate-700 bg-slate-800/50 px-4 py-2 text-sm text-white outline-none transition-colors focus:border-blue-500"
+            >
+              {alpacaBrokersForSelect.map((broker: any) => (
+                <option key={broker.id} value={broker.id}>
+                  {broker.displayName || broker.name || 'Alpaca'} - {broker.accountId || 'N/A'}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       )}
 

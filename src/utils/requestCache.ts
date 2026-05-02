@@ -4,6 +4,12 @@ type CacheEntry<T> = {
   inflight?: Promise<T>;
 };
 
+export type CacheSnapshot<T> = {
+  data?: T;
+  updatedAt: number;
+  inflight: boolean;
+};
+
 type LoadOptions = {
   ttlMs?: number;
   forceRefresh?: boolean;
@@ -51,6 +57,20 @@ export function createRequestCache(now: () => number = () => Date.now()) {
   return {
     peek<T>(key: string) {
       return entries.get(key)?.data as T | undefined;
+    },
+
+    peekSnapshot<T>(key: string): CacheSnapshot<T> | undefined {
+      const entry = entries.get(key) as CacheEntry<T> | undefined;
+
+      if (!entry) {
+        return undefined;
+      }
+
+      return {
+        data: entry.data,
+        updatedAt: entry.updatedAt,
+        inflight: Boolean(entry.inflight),
+      };
     },
 
     clear() {

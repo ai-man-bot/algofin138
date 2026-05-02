@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { TrendingUp, TrendingDown, BarChart3, Activity, AlertTriangle, CheckCircle, XCircle, ArrowUpRight, ArrowDownRight, Calendar, DollarSign, Target, Percent, RefreshCw } from './CustomIcons';
-import { strategiesAPI, tradesAPI } from '../utils/api';
+import { strategiesAPI, tradesAPI, getCachedRequestSnapshot, getRequestMetric } from '../utils/api';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ComposedChart, Area, ScatterChart, Scatter, Cell } from 'recharts';
 import {
   calculateBacktestMetrics,
@@ -10,6 +10,7 @@ import {
   type PerformanceMetrics,
   type StrategyBacktestData,
 } from '../utils/tradeAnalytics';
+import { DataRefreshBadge } from './DataRefreshBadge';
 
 interface Strategy {
   id: string;
@@ -67,6 +68,7 @@ export function PerformanceAnalyticsPage() {
   const [selectedStrategyId, setSelectedStrategyId] = useState<string | null>(null);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [timeframe, setTimeframe] = useState<'1W' | '1M' | '3M' | '6M' | '1Y' | 'ALL'>('1M');
   
   const [backtestMetrics, setBacktestMetrics] = useState<PerformanceMetrics | null>(null);
@@ -74,6 +76,7 @@ export function PerformanceAnalyticsPage() {
   const [divergenceAlerts, setDivergenceAlerts] = useState<DivergenceAlert[]>([]);
   const [dailyReturnsData, setDailyReturnsData] = useState<any[]>([]);
   const [hasAutoSynced, setHasAutoSynced] = useState(false);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
 
   useEffect(() => {
     loadData();
@@ -108,8 +111,17 @@ export function PerformanceAnalyticsPage() {
   };
 
   const loadData = async () => {
+    const cachedStrategies = getCachedRequestSnapshot<Strategy[]>('/strategies');
+
     try {
-      setLoading(true);
+      if (cachedStrategies?.data?.length && strategies.length === 0) {
+        setStrategies(cachedStrategies.data);
+        setLastUpdatedAt(cachedStrategies.updatedAt);
+      }
+
+      const hasVisibleData = Boolean(cachedStrategies?.data?.length || strategies.length);
+      setLoading(!hasVisibleData);
+      setIsRefreshing(hasVisibleData);
       const strategiesData = await strategiesAPI.getAll();
       setStrategies(strategiesData);
       
@@ -120,23 +132,36 @@ export function PerformanceAnalyticsPage() {
       } else if (strategiesData.length > 0) {
         setSelectedStrategyId(strategiesData[0].id);
       }
+      setLastUpdatedAt(getCachedRequestSnapshot<Strategy[]>('/strategies')?.updatedAt ?? Date.now());
     } catch (error) {
       console.error('Error loading strategies:', error);
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
   const loadStrategyAnalytics = async () => {
     if (!selectedStrategyId) return;
 
+    const cachedTrades = getCachedRequestSnapshot<Trade[]>('/trades');
+
     try {
-      setLoading(true);
+      if (cachedTrades?.data && trades.length === 0) {
+        const cachedStrategyTrades = cachedTrades.data.filter((t: Trade) => t.strategyId === selectedStrategyId);
+        setTrades(cachedStrategyTrades);
+        setLastUpdatedAt(Math.max(lastUpdatedAt ?? 0, cachedTrades.updatedAt));
+      }
+
+      const hasVisibleData = Boolean(trades.length || cachedTrades?.data?.length);
+      setLoading(!hasVisibleData);
+      setIsRefreshing(hasVisibleData);
       
       // Load trades for the selected strategy
       const allTrades = await tradesAPI.getAll();
       const strategyTrades = allTrades.filter((t: Trade) => t.strategyId === selectedStrategyId);
       setTrades(strategyTrades);
+      setLastUpdatedAt(Math.max(getCachedRequestSnapshot<Trade[]>('/trades')?.updatedAt ?? 0, Date.now()));
       
       console.log(`📊 Performance: Found ${strategyTrades.length} trades for strategy ${selectedStrategyId}`);
       console.log('📊 Performance: Sample trades:', strategyTrades.slice(0, 3));
@@ -206,6 +231,7 @@ export function PerformanceAnalyticsPage() {
       console.error('Error loading strategy analytics:', error);
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -339,14 +365,22 @@ export function PerformanceAnalyticsPage() {
             <BarChart3 className="w-6 h-6 text-blue-400" />
             <h1 className="text-2xl">Performance Analytics</h1>
           </div>
-          
-          <button
-            onClick={loadData}
-            className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
-          >
-            <RefreshCw className="w-4 h-4" />
-            Refresh
-          </button>
+
+          <div className="flex items-center gap-3">
+            <DataRefreshBadge
+              isLoading={loading}
+              isRefreshing={isRefreshing}
+              updatedAt={lastUpdatedAt}
+              lastDurationMs={getRequestMetric('/trades')?.durationMs ?? getRequestMetric('/strategies')?.durationMs ?? null}
+            />
+            <button
+              onClick={loadData}
+              className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Refresh
+            </button>
+          </div>
         </div>
       </div>
 

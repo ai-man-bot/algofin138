@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Bell, Mail, MessageSquare, Smartphone, Check, AlertTriangle, TrendingUp, TrendingDown, DollarSign, X, RefreshCw } from './CustomIcons';
-import { notificationsAPI } from '../utils/api';
+import { notificationsAPI, getCachedRequestSnapshot, getRequestMetric } from '../utils/api';
+import { DataRefreshBadge } from './DataRefreshBadge';
 
 interface Notification {
   id: string;
@@ -41,8 +42,10 @@ export function NotificationsPage() {
     quietHoursEnd: '07:00',
   });
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
   const [pushPermission, setPushPermission] = useState<NotificationPermission>('default');
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
 
   useEffect(() => {
     loadNotifications();
@@ -81,18 +84,36 @@ export function NotificationsPage() {
   };
 
   const loadNotifications = async () => {
+    const cachedNotifications = getCachedRequestSnapshot<Notification[]>('/notifications');
+
     try {
+      if (cachedNotifications?.data && notifications.length === 0) {
+        setNotifications(cachedNotifications.data);
+        setLastUpdatedAt(cachedNotifications.updatedAt);
+      }
+
+      const hasVisibleData = Boolean(cachedNotifications?.data || notifications.length);
+      setLoading(!hasVisibleData);
+      setIsRefreshing(hasVisibleData);
       const data = await notificationsAPI.getAll();
       setNotifications(Array.isArray(data) ? data : []);
+      setLastUpdatedAt(getCachedRequestSnapshot<Notification[]>('/notifications')?.updatedAt ?? Date.now());
     } catch (error) {
       console.error('Error loading notifications:', error);
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
   const loadSettings = async () => {
+    const cachedSettings = getCachedRequestSnapshot<NotificationSettings>('/notification-settings');
+
     try {
+      if (cachedSettings?.data) {
+        setSettings(cachedSettings.data);
+      }
+
       const data = await notificationsAPI.getSettings();
       if (data) {
         setSettings(data);
@@ -201,6 +222,12 @@ export function NotificationsPage() {
               <p className="text-slate-400">Real-time alerts from your trading activity</p>
             </div>
             <div className="flex gap-2">
+              <DataRefreshBadge
+                isLoading={loading}
+                isRefreshing={isRefreshing}
+                updatedAt={lastUpdatedAt}
+                lastDurationMs={getRequestMetric('/notifications')?.durationMs ?? null}
+              />
               <button
                 onClick={loadNotifications}
                 className="flex items-center gap-2 rounded-lg bg-slate-800/50 px-4 py-2 text-sm text-slate-300 transition-colors hover:bg-slate-800"

@@ -1,13 +1,16 @@
 import { useState, useEffect } from 'react';
-import { analyticsAPI, tradesAPI } from '../utils/api';
+import { analyticsAPI, tradesAPI, getCachedRequestSnapshot, getRequestMetric } from '../utils/api';
 import { TrendingUp, TrendingDown, Activity, DollarSign, Target, AlertTriangle, BarChart3, RefreshCw } from './CustomIcons';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell } from 'recharts';
+import { DataRefreshBadge } from './DataRefreshBadge';
 
 export function AnalyticsPage() {
   const [analytics, setAnalytics] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [hasAutoSynced, setHasAutoSynced] = useState(false);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
 
   useEffect(() => {
     loadAnalytics();
@@ -23,16 +26,27 @@ export function AnalyticsPage() {
   }, [analytics, hasAutoSynced]);
 
   const loadAnalytics = async () => {
+    const cachedAnalytics = getCachedRequestSnapshot<any>('/analytics/portfolio');
+
     try {
-      setLoading(true);
+      if (cachedAnalytics?.data && !analytics) {
+        setAnalytics(cachedAnalytics.data);
+        setLastUpdatedAt(cachedAnalytics.updatedAt);
+      }
+
+      const hasVisibleData = Boolean(cachedAnalytics?.data || analytics);
+      setLoading(!hasVisibleData);
+      setIsRefreshing(hasVisibleData);
       console.log('📊 Analytics: Loading portfolio analytics...');
       const data = await analyticsAPI.getPortfolio();
       console.log('📊 Analytics: Received data:', data);
       setAnalytics(data);
+      setLastUpdatedAt(getCachedRequestSnapshot<any>('/analytics/portfolio')?.updatedAt ?? Date.now());
     } catch (error) {
       console.error('Error loading analytics:', error);
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -80,14 +94,22 @@ export function AnalyticsPage() {
               Comprehensive performance metrics and insights
             </p>
           </div>
-          <button
-            onClick={handleSyncAll}
-            disabled={syncing}
-            className="flex items-center gap-2 rounded-lg bg-blue-500 px-4 py-2 text-sm text-white transition-colors hover:bg-blue-600 disabled:opacity-50"
-          >
-            <RefreshCw className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
-            {syncing ? 'Syncing...' : 'Sync All Trades'}
-          </button>
+          <div className="flex items-center gap-3">
+            <DataRefreshBadge
+              isLoading={loading}
+              isRefreshing={isRefreshing}
+              updatedAt={lastUpdatedAt}
+              lastDurationMs={getRequestMetric('/analytics/portfolio')?.durationMs ?? null}
+            />
+            <button
+              onClick={handleSyncAll}
+              disabled={syncing}
+              className="flex items-center gap-2 rounded-lg bg-blue-500 px-4 py-2 text-sm text-white transition-colors hover:bg-blue-600 disabled:opacity-50"
+            >
+              <RefreshCw className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
+              {syncing ? 'Syncing...' : 'Sync All Trades'}
+            </button>
+          </div>
         </div>
 
         {/* Key Metrics Grid */}

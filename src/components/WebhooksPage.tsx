@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Plus, Copy, Trash2, RefreshCw, CheckCircle2, XCircle, Clock } from './CustomIcons';
-import { webhooksAPI, testWebhook, strategiesAPI } from '../utils/api';
+import { webhooksAPI, testWebhook, strategiesAPI, getCachedRequestSnapshot, getRequestMetric } from '../utils/api';
 import { LinkIcon } from '@heroicons/react/24/outline';
+import { DataRefreshBadge } from './DataRefreshBadge';
 
 // Fallback copy function that works without clipboard permissions
 const copyToClipboard = (text: string) => {
@@ -29,10 +30,12 @@ export function WebhooksPage() {
   const [webhooks, setWebhooks] = useState<any[]>([]);
   const [recentEvents, setRecentEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [showTestModal, setShowTestModal] = useState(false);
   const [testWebhookUrl, setTestWebhookUrl] = useState('');
   const [testPayload, setTestPayload] = useState('{\"action\":\"buy\",\"symbol\":\"AAPL\",\"quantity\":100}');
   const [testResult, setTestResult] = useState<any>(null);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
 
   useEffect(() => {
     loadWebhooks();
@@ -40,7 +43,13 @@ export function WebhooksPage() {
   }, []);
 
   const loadStrategies = async () => {
+    const cachedStrategies = getCachedRequestSnapshot<any[]>('/strategies');
+
     try {
+      if (cachedStrategies?.data?.length && strategies.length === 0) {
+        setStrategies(cachedStrategies.data);
+      }
+
       const strategiesData = await strategiesAPI.getAll();
       setStrategies(strategiesData);
       // Set first strategy as default if available
@@ -53,8 +62,27 @@ export function WebhooksPage() {
   };
 
   const loadWebhooks = async () => {
+    const cachedWebhooks = getCachedRequestSnapshot<any[]>('/webhooks');
+    const cachedEvents = getCachedRequestSnapshot<any[]>('/webhooks/all/events');
+
     try {
-      setLoading(true);
+      if (cachedWebhooks?.data && webhooks.length === 0) {
+        setWebhooks(cachedWebhooks.data);
+      }
+
+      if (cachedEvents?.data && recentEvents.length === 0) {
+        const sortedCachedEvents = [...cachedEvents.data].sort((a: any, b: any) => {
+          return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
+        });
+        setRecentEvents(sortedCachedEvents);
+        setLastUpdatedAt(Math.max(cachedEvents.updatedAt, cachedWebhooks?.updatedAt ?? 0));
+      }
+
+      const hasVisibleData = Boolean(
+        cachedWebhooks?.data?.length || cachedEvents?.data?.length || webhooks.length || recentEvents.length,
+      );
+      setLoading(!hasVisibleData);
+      setIsRefreshing(hasVisibleData);
       const webhooksData = await webhooksAPI.getAll();
       setWebhooks(webhooksData);
       
@@ -68,10 +96,14 @@ export function WebhooksPage() {
       });
       
       setRecentEvents(sortedEvents);
+      const webhookUpdatedAt = getCachedRequestSnapshot<any[]>('/webhooks')?.updatedAt ?? 0;
+      const eventUpdatedAt = getCachedRequestSnapshot<any[]>('/webhooks/all/events')?.updatedAt ?? Date.now();
+      setLastUpdatedAt(Math.max(webhookUpdatedAt, eventUpdatedAt));
     } catch (error) {
       console.error('Error loading webhooks:', error);
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -163,13 +195,21 @@ export function WebhooksPage() {
           <h2 className="mb-2 text-slate-100">Webhooks</h2>
           <p className="text-slate-400">Receive signals from external platforms</p>
         </div>
-        <button
-          onClick={() => setShowModal(true)}
-          className="flex items-center gap-2 rounded-lg bg-blue-500 px-4 py-3 transition-colors hover:bg-blue-600"
-        >
-          <Plus className="h-5 w-5" />
-          Create Webhook
-        </button>
+        <div className="flex items-center gap-3">
+          <DataRefreshBadge
+            isLoading={loading}
+            isRefreshing={isRefreshing}
+            updatedAt={lastUpdatedAt}
+            lastDurationMs={getRequestMetric('/webhooks/all/events')?.durationMs ?? getRequestMetric('/webhooks')?.durationMs ?? null}
+          />
+          <button
+            onClick={() => setShowModal(true)}
+            className="flex items-center gap-2 rounded-lg bg-blue-500 px-4 py-3 transition-colors hover:bg-blue-600"
+          >
+            <Plus className="h-5 w-5" />
+            Create Webhook
+          </button>
+        </div>
       </div>
 
       {/* Webhook Cards */}

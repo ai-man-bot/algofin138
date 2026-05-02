@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { CheckCircle2, Plus, X, Key, Lock } from './CustomIcons';
-import { brokersAPI } from '../utils/api';
+import { brokersAPI, getCachedRequestSnapshot, getRequestMetric } from '../utils/api';
+import { DataRefreshBadge } from './DataRefreshBadge';
 
 const availableBrokers = [
   {
@@ -59,22 +60,35 @@ export function BrokersPage() {
   const [apiSecret, setApiSecret] = useState('');
   const [connectedBrokers, setConnectedBrokers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [connecting, setConnecting] = useState(false);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
 
   useEffect(() => {
     loadBrokers();
   }, []);
 
   const loadBrokers = async () => {
+    const cachedBrokers = getCachedRequestSnapshot<any[]>('/brokers');
+
     try {
-      setLoading(true);
+      if (cachedBrokers?.data?.length && connectedBrokers.length === 0) {
+        setConnectedBrokers(cachedBrokers.data.map(normalizeBroker));
+        setLastUpdatedAt(cachedBrokers.updatedAt);
+      }
+
+      const hasVisibleData = Boolean(cachedBrokers?.data?.length || connectedBrokers.length);
+      setLoading(!hasVisibleData);
+      setIsRefreshing(hasVisibleData);
       const brokers = await brokersAPI.getAll();
       setConnectedBrokers((brokers || []).map(normalizeBroker));
+      setLastUpdatedAt(getCachedRequestSnapshot<any[]>('/brokers')?.updatedAt ?? Date.now());
     } catch (err) {
       console.error('Error loading brokers:', err);
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -158,8 +172,18 @@ export function BrokersPage() {
   return (
     <div className="min-h-screen bg-[#0f172a] mx-auto max-w-[1600px] px-6 py-8">
       <div className="mb-8">
-        <h2 className="mb-2 text-slate-100">Broker Connections</h2>
-        <p className="text-slate-400">Manage your trading account integrations</p>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="mb-2 text-slate-100">Broker Connections</h2>
+            <p className="text-slate-400">Manage your trading account integrations</p>
+          </div>
+          <DataRefreshBadge
+            isLoading={loading}
+            isRefreshing={isRefreshing}
+            updatedAt={lastUpdatedAt}
+            lastDurationMs={getRequestMetric('/brokers')?.durationMs ?? null}
+          />
+        </div>
       </div>
 
       {connectedBrokers.length > 0 && (

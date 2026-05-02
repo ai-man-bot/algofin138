@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
-import { alpacaAPI, brokersAPI, webhooksAPI } from '../utils/api';
+import { alpacaAPI, brokersAPI, webhooksAPI, getRequestMetric } from '../utils/api';
 import { normalizeBrokerConnections } from '../utils/brokerModels';
 import { NewOpenTradesTable, OrdersTable } from './NewTables';
 import { calculatePerformanceMetricsFromPairs, createTradingPairs } from '../utils/tradeAnalytics';
+import { DataRefreshBadge } from './DataRefreshBadge';
 
 // Custom Icons
 const SearchIcon = () => (
@@ -154,10 +155,12 @@ export function TradesTab({ selectedBrokerId, setSelectedBrokerId }: TradesTabPr
   const [webhookEvents, setWebhookEvents] = useState<any[]>([]);
   const [quotes, setQuotes] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [alpacaConnected, setAlpacaConnected] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [backfilling, setBackfilling] = useState(false);
   const [connectedBrokers, setConnectedBrokers] = useState<any[]>([]);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
 
   useEffect(() => {
     loadData();
@@ -171,8 +174,11 @@ export function TradesTab({ selectedBrokerId, setSelectedBrokerId }: TradesTabPr
   }, [activeTab, selectedBrokerId]);
 
   const loadData = async () => {
+    const hasVisibleData = Boolean(connectedBrokers.length || webhookEvents.length || positions.length || orders.length);
+
     try {
-      setLoading(true);
+      setLoading(!hasVisibleData);
+      setIsRefreshing(hasVisibleData);
       
       // Load connected brokers
       const brokerRows = await brokersAPI.getAll();
@@ -260,6 +266,8 @@ export function TradesTab({ selectedBrokerId, setSelectedBrokerId }: TradesTabPr
           } else {
             setQuotes({});
           }
+
+          setLastUpdatedAt(Date.now());
         }
       } else {
         setAlpacaConnected(false);
@@ -271,6 +279,7 @@ export function TradesTab({ selectedBrokerId, setSelectedBrokerId }: TradesTabPr
       setAlpacaConnected(false);
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -598,19 +607,27 @@ export function TradesTab({ selectedBrokerId, setSelectedBrokerId }: TradesTabPr
               <p className="text-xs text-slate-500">Select an account to display trades</p>
             </div>
           </div>
-          <select
-            value={selectedBrokerId}
-            onChange={(e) => setSelectedBrokerId(e.target.value)}
-            className="rounded-lg border border-slate-700 bg-slate-800/50 px-4 py-2 text-sm text-white outline-none transition-colors focus:border-blue-500"
-          >
-            {connectedBrokers
-              .filter((b: any) => isAlpacaBroker(b))
-              .map((broker: any) => (
-                <option key={broker.id} value={broker.id}>
-                  {broker.displayName || broker.name || 'Alpaca'} - {broker.accountId || broker.account_id || 'N/A'}
-                </option>
-              ))}
-          </select>
+          <div className="flex items-center gap-3">
+            <DataRefreshBadge
+              isLoading={loading}
+              isRefreshing={isRefreshing}
+              updatedAt={lastUpdatedAt}
+              lastDurationMs={getRequestMetric('/alpaca/orders?status=all&limit=500')?.durationMs ?? getRequestMetric('/webhooks/all/events')?.durationMs ?? null}
+            />
+            <select
+              value={selectedBrokerId}
+              onChange={(e) => setSelectedBrokerId(e.target.value)}
+              className="rounded-lg border border-slate-700 bg-slate-800/50 px-4 py-2 text-sm text-white outline-none transition-colors focus:border-blue-500"
+            >
+              {connectedBrokers
+                .filter((b: any) => isAlpacaBroker(b))
+                .map((broker: any) => (
+                  <option key={broker.id} value={broker.id}>
+                    {broker.displayName || broker.name || 'Alpaca'} - {broker.accountId || broker.account_id || 'N/A'}
+                  </option>
+                ))}
+            </select>
+          </div>
         </div>
       )}
       
