@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Plus, Copy, Trash2, RefreshCw, CheckCircle2, XCircle, Clock } from './CustomIcons';
-import { webhooksAPI, testWebhook, strategiesAPI, getCachedRequestSnapshot, getRequestMetric } from '../utils/api';
+import { webhooksAPI, testWebhook, strategiesAPI, getRequestMetric } from '../utils/api';
+import { hydrateScreenData, loadScreenData } from '../utils/screenLoader';
 import { LinkIcon } from '@heroicons/react/24/outline';
 import { DataRefreshBadge } from './DataRefreshBadge';
 
@@ -38,67 +39,70 @@ export function WebhooksPage() {
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
 
   useEffect(() => {
-    loadWebhooks();
-    loadStrategies();
+    loadScreen();
   }, []);
 
-  const loadStrategies = async () => {
-    const cachedStrategies = getCachedRequestSnapshot<any[]>('/strategies');
+  const loadScreen = async () => {
+    const requests = [
+      {
+        key: 'strategies',
+        path: '/strategies',
+        load: () => strategiesAPI.getAll().catch(() => []),
+      },
+      {
+        key: 'webhooks',
+        path: '/webhooks',
+        load: () => webhooksAPI.getAll().catch(() => []),
+      },
+      {
+        key: 'recentEvents',
+        path: '/webhooks/all/events',
+        load: () => webhooksAPI.getAllEvents().catch(() => []),
+        map: (events: any[]) =>
+          [...events].sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()),
+      },
+    ];
 
-    try {
-      if (cachedStrategies?.data?.length && strategies.length === 0) {
-        setStrategies(cachedStrategies.data);
-      }
+    const cached = hydrateScreenData<{
+      strategies: any[];
+      webhooks: any[];
+      recentEvents: any[];
+    }>(requests);
 
-      const strategiesData = await strategiesAPI.getAll();
-      setStrategies(strategiesData);
-      // Set first strategy as default if available
-      if (strategiesData.length > 0 && !selectedStrategyId) {
-        setSelectedStrategyId(strategiesData[0].id);
+    const hasVisibleData = Boolean(
+      cached.hasCachedData || strategies.length || webhooks.length || recentEvents.length,
+    );
+
+    if (cached.hasCachedData) {
+      setStrategies(cached.data.strategies ?? []);
+      setWebhooks(cached.data.webhooks ?? []);
+      setRecentEvents(cached.data.recentEvents ?? []);
+      setLastUpdatedAt(cached.updatedAt);
+
+      if (!selectedStrategyId && cached.data.strategies?.length) {
+        setSelectedStrategyId(cached.data.strategies[0].id);
       }
-    } catch (error) {
-      console.error('Error loading strategies:', error);
     }
-  };
-
-  const loadWebhooks = async () => {
-    const cachedWebhooks = getCachedRequestSnapshot<any[]>('/webhooks');
-    const cachedEvents = getCachedRequestSnapshot<any[]>('/webhooks/all/events');
 
     try {
-      if (cachedWebhooks?.data && webhooks.length === 0) {
-        setWebhooks(cachedWebhooks.data);
-      }
-
-      if (cachedEvents?.data && recentEvents.length === 0) {
-        const sortedCachedEvents = [...cachedEvents.data].sort((a: any, b: any) => {
-          return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
-        });
-        setRecentEvents(sortedCachedEvents);
-        setLastUpdatedAt(Math.max(cachedEvents.updatedAt, cachedWebhooks?.updatedAt ?? 0));
-      }
-
-      const hasVisibleData = Boolean(
-        cachedWebhooks?.data?.length || cachedEvents?.data?.length || webhooks.length || recentEvents.length,
-      );
       setLoading(!hasVisibleData);
       setIsRefreshing(hasVisibleData);
-      const webhooksData = await webhooksAPI.getAll();
-      setWebhooks(webhooksData);
-      
-      // Load ALL events (not tied to specific webhook ID)
-      // The backend returns all events for the user
-      const eventsData = await webhooksAPI.getEvents('all');
-      
-      // Sort events by timestamp (newest first)
-      const sortedEvents = eventsData.sort((a: any, b: any) => {
-        return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
-      });
-      
-      setRecentEvents(sortedEvents);
-      const webhookUpdatedAt = getCachedRequestSnapshot<any[]>('/webhooks')?.updatedAt ?? 0;
-      const eventUpdatedAt = getCachedRequestSnapshot<any[]>('/webhooks/all/events')?.updatedAt ?? Date.now();
-      setLastUpdatedAt(Math.max(webhookUpdatedAt, eventUpdatedAt));
+
+      const loaded = await loadScreenData<{
+        strategies: any[];
+        webhooks: any[];
+        recentEvents: any[];
+      }>(requests);
+
+      const nextStrategies = loaded.data.strategies ?? [];
+      setStrategies(nextStrategies);
+      setWebhooks(loaded.data.webhooks ?? []);
+      setRecentEvents(loaded.data.recentEvents ?? []);
+      setLastUpdatedAt(loaded.updatedAt ?? Date.now());
+
+      if (!selectedStrategyId && nextStrategies.length > 0) {
+        setSelectedStrategyId(nextStrategies[0].id);
+      }
     } catch (error) {
       console.error('Error loading webhooks:', error);
     } finally {
@@ -125,7 +129,7 @@ export function WebhooksPage() {
       setShowModal(false);
       setWebhookName('');
       setSelectedStrategyId('');
-      await loadWebhooks();
+      await loadScreen();
     } catch (error) {
       console.error('Error creating webhook:', error);
       alert('Failed to create webhook. Please try again.');
@@ -137,7 +141,7 @@ export function WebhooksPage() {
     
     try {
       await webhooksAPI.delete(id);
-      await loadWebhooks();
+      await loadScreen();
     } catch (error) {
       console.error('Error deleting webhook:', error);
       alert('Failed to delete webhook. Please try again.');
@@ -168,7 +172,7 @@ export function WebhooksPage() {
       
       // Refresh events after successful test
       if (result.ok) {
-        setTimeout(() => loadWebhooks(), 1000);
+        setTimeout(() => loadScreen(), 1000);
       }
     } catch (error) {
       console.error('Error testing webhook:', error);

@@ -10,6 +10,7 @@ import {
 } from './CustomIcons';
 import { CustomAreaChart } from './CustomAreaChart';
 import { dashboardAPI, alpacaAPI, brokersAPI, getRequestMetric } from '../utils/api';
+import { hydrateScreenData, loadScreenData } from '../utils/screenLoader';
 import {
   normalizeAlpacaAccount,
   normalizeAlpacaOrders,
@@ -178,6 +179,54 @@ function normalizeOrders(raw: any): any[] {
   });
 }
 
+function applyDashboardState(
+  payload: Partial<{
+    metrics: any;
+    account: any;
+    equityCurve: EquityDataPoint[];
+    positions: any[];
+    recentOrders: any[];
+  }>,
+  brokerStillConnected: boolean,
+  setters: {
+    setMetrics: (value: any) => void;
+    setEquityData: (value: EquityDataPoint[]) => void;
+    setPositions: (value: any[]) => void;
+    setRecentOrders: (value: any[]) => void;
+    setHasBrokerConnected: (value: boolean) => void;
+    setLastUpdatedAt: (value: number | null) => void;
+  },
+  fallbackEquity = 0,
+  updatedAt: number | null = null,
+) {
+  const account = normalizeAlpacaAccount(payload.account || {});
+  const metricsSource = payload.metrics || payload.account || {};
+  const totalEquity = payload.account ? account.equity : safeNumber(metricsSource.totalEquity);
+
+  setters.setMetrics({
+    totalEquity,
+    buyingPower: payload.account ? account.buyingPower : safeNumber(metricsSource.buyingPower),
+    dayChange: payload.account ? account.dayChange : safeNumber(metricsSource.dayChange),
+    dayChangePercent: payload.account
+      ? account.dayChangePercent
+      : safeNumber(metricsSource.dayChangePercent),
+    activeAlerts: safeNumber(metricsSource.activeAlerts),
+  });
+
+  const normalizedEquity = payload.equityCurve ?? [];
+  setters.setEquityData(
+    normalizedEquity.length > 0
+      ? normalizedEquity
+      : totalEquity || fallbackEquity
+        ? buildFallbackEquitySeries(totalEquity || fallbackEquity)
+        : [],
+  );
+  setters.setPositions(payload.positions ?? []);
+  setters.setRecentOrders(payload.recentOrders ?? []);
+  setters.setHasBrokerConnected(brokerStillConnected);
+  setters.setLastUpdatedAt(updatedAt);
+}
+
 export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }: DashboardProps) {
   const [metrics, setMetrics] = useState({
     totalEquity: 0,
@@ -201,10 +250,92 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
     loadDashboardData();
   }, [selectedBrokerId, selectedTimeframe]);
 
+  const loadDefaultData = async (brokerStillConnected = false) => {
+    const requests = [
+      {
+        key: 'metrics',
+        path: '/dashboard/metrics',
+        load: () => dashboardAPI.getMetrics().catch(() => null),
+      },
+      {
+        key: 'equityCurve',
+        path: '/dashboard/equity-curve',
+        load: () => dashboardAPI.getEquityCurve().catch(() => []),
+        map: normalizeEquityData,
+      },
+      {
+        key: 'positions',
+        path: '/dashboard/positions',
+        load: () => dashboardAPI.getPositions().catch(() => []),
+        map: normalizePositions,
+      },
+      {
+        key: 'recentOrders',
+        path: '/dashboard/recent-orders',
+        load: () => dashboardAPI.getRecentOrders().catch(() => []),
+        map: normalizeOrders,
+      },
+    ];
+
+    const cached = hydrateScreenData<{
+      metrics: any;
+      equityCurve: EquityDataPoint[];
+      positions: any[];
+      recentOrders: any[];
+    }>(requests);
+
+    if (cached.hasCachedData) {
+      applyDashboardState(cached.data, brokerStillConnected, {
+        setMetrics,
+        setEquityData,
+        setPositions,
+        setRecentOrders,
+        setHasBrokerConnected,
+        setLastUpdatedAt,
+      }, 0, cached.updatedAt);
+    }
+
+    try {
+      const loaded = await loadScreenData<{
+        metrics: any;
+        equityCurve: EquityDataPoint[];
+        positions: any[];
+        recentOrders: any[];
+      }>(requests);
+
+      applyDashboardState(loaded.data, brokerStillConnected, {
+        setMetrics,
+        setEquityData,
+        setPositions,
+        setRecentOrders,
+        setHasBrokerConnected,
+        setLastUpdatedAt,
+      }, 0, loaded.updatedAt ?? Date.now());
+    } catch (error) {
+      console.error('Error loading default data:', error);
+
+      if (!cached.hasCachedData) {
+        setMetrics({
+          totalEquity: 0,
+          buyingPower: 0,
+          dayChange: 0,
+          dayChangePercent: 0,
+          activeAlerts: 0,
+        });
+        setEquityData([]);
+        setPositions([]);
+        setRecentOrders([]);
+        setHasBrokerConnected(brokerStillConnected);
+        setLastUpdatedAt(null);
+      }
+    }
+  };
+
   const loadDashboardData = async () => {
     const hasVisibleData = Boolean(
       connectedBrokers.length || equityData.length || positions.length || recentOrders.length,
     );
+    let brokerStillConnected = false;
 
     try {
       setLoading(!hasVisibleData);
@@ -215,11 +346,11 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
       setConnectedBrokers(brokers);
 
       const alpacaBrokers = brokers.filter(
-        (broker: any) => isAlpacaBroker(broker) && broker.connected !== false
+        (broker: any) => isAlpacaBroker(broker) && broker.connected !== false,
       );
 
       const selectedBrokerStillExists = alpacaBrokers.some(
-        (broker: any) => broker.id === selectedBrokerId
+        (broker: any) => broker.id === selectedBrokerId,
       );
 
       console.log('📊 Dashboard: Loaded brokers:', brokers);
@@ -232,6 +363,8 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
         return;
       }
 
+      brokerStillConnected = true;
+
       if (!selectedBrokerId || !selectedBrokerStillExists) {
         setSelectedBrokerId(alpacaBrokers[0].id);
       }
@@ -241,97 +374,92 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
           ? selectedBrokerId
           : alpacaBrokers[0].id;
 
-      try {
-        const params = getEquityHistoryParams(selectedTimeframe);
+      const params = getEquityHistoryParams(selectedTimeframe);
+      const portfolioPath = `/alpaca/portfolio-history?${new URLSearchParams({
+        period: '1M',
+        timeframe: params.timeframe,
+        startDate: params.startDate,
+        endDate: params.endDate,
+      }).toString()}`;
 
-        const [accountData, positionsData, portfolioHistory, ordersData] = await Promise.all([
-          alpacaAPI.getAccount(activeBrokerId).catch(() => null),
-          alpacaAPI.getPositions(activeBrokerId).catch(() => []),
-          alpacaAPI
-            .getPortfolioHistory(
-              activeBrokerId,
-              undefined,
-              params.timeframe,
-              params.startDate,
-              params.endDate
-            )
-            .catch(() => []),
-          alpacaAPI.getOrders(activeBrokerId, 'all', 10).catch(() => []),
-        ]);
+      const requests = [
+        {
+          key: 'account',
+          path: '/alpaca/account',
+          load: () => alpacaAPI.getAccount(activeBrokerId).catch(() => null),
+        },
+        {
+          key: 'positions',
+          path: '/alpaca/positions',
+          load: () => alpacaAPI.getPositions(activeBrokerId).catch(() => []),
+          map: normalizePositions,
+        },
+        {
+          key: 'equityCurve',
+          path: portfolioPath,
+          load: () =>
+            alpacaAPI
+              .getPortfolioHistory(
+                activeBrokerId,
+                undefined,
+                params.timeframe,
+                params.startDate,
+                params.endDate,
+              )
+              .catch(() => []),
+          map: normalizeEquityData,
+        },
+        {
+          key: 'recentOrders',
+          path: '/alpaca/orders?status=all&limit=10',
+          load: () => alpacaAPI.getOrders(activeBrokerId, 'all', 10).catch(() => []),
+          map: normalizeOrders,
+        },
+      ];
 
-        const normalizedAccount = normalizeAlpacaAccount(accountData || {});
+      const cached = hydrateScreenData<{
+        account: any;
+        positions: any[];
+        equityCurve: EquityDataPoint[];
+        recentOrders: any[];
+      }>(requests);
 
-        setMetrics({
-          totalEquity: normalizedAccount.equity,
-          buyingPower: normalizedAccount.buyingPower,
-          dayChange: normalizedAccount.dayChange,
-          dayChangePercent: normalizedAccount.dayChangePercent,
-          activeAlerts: safeNumber(accountData?.activeAlerts),
-        });
-
-        setPositions(normalizePositions(positionsData));
-        setRecentOrders(normalizeOrders(ordersData));
-
-        const normalizedEquity = normalizeEquityData(portfolioHistory);
-        setEquityData(
-          normalizedEquity.length > 0
-            ? normalizedEquity
-            : buildFallbackEquitySeries(normalizedAccount.equity)
-        );
-
-        setHasBrokerConnected(true);
-        setLastUpdatedAt(Date.now());
-      } catch (alpacaError) {
-        console.error('Error fetching Alpaca data:', alpacaError);
-        await loadDefaultData(true);
+      if (cached.hasCachedData) {
+        applyDashboardState(cached.data, true, {
+          setMetrics,
+          setEquityData,
+          setPositions,
+          setRecentOrders,
+          setHasBrokerConnected,
+          setLastUpdatedAt,
+        }, normalizeAlpacaAccount(cached.data.account || {}).equity, cached.updatedAt);
       }
+
+      const loaded = await loadScreenData<{
+        account: any;
+        positions: any[];
+        equityCurve: EquityDataPoint[];
+        recentOrders: any[];
+      }>(requests);
+
+      if (!loaded.data.account && !loaded.data.positions && !loaded.data.recentOrders) {
+        throw new Error('Alpaca screen data unavailable');
+      }
+
+      applyDashboardState(loaded.data, true, {
+        setMetrics,
+        setEquityData,
+        setPositions,
+        setRecentOrders,
+        setHasBrokerConnected,
+        setLastUpdatedAt,
+      }, normalizeAlpacaAccount(loaded.data.account || {}).equity, loaded.updatedAt ?? Date.now());
     } catch (error) {
       console.error('Error loading dashboard data:', error);
-      await loadDefaultData(false);
+      await loadDefaultData(brokerStillConnected);
     } finally {
       setLoading(false);
       setIsRefreshing(false);
-    }
-  };
-
-  const loadDefaultData = async (brokerStillConnected = false) => {
-    try {
-      const [metricsData, equityCurveData, positionsData, recentOrdersData] = await Promise.all([
-        dashboardAPI.getMetrics().catch(() => null),
-        dashboardAPI.getEquityCurve().catch(() => []),
-        dashboardAPI.getPositions().catch(() => []),
-        dashboardAPI.getRecentOrders().catch(() => []),
-      ]);
-
-      setMetrics({
-        totalEquity: safeNumber(metricsData?.totalEquity),
-        buyingPower: safeNumber(metricsData?.buyingPower),
-        dayChange: safeNumber(metricsData?.dayChange),
-        dayChangePercent: safeNumber(metricsData?.dayChangePercent),
-        activeAlerts: safeNumber(metricsData?.activeAlerts),
-      });
-
-      setEquityData(normalizeEquityData(equityCurveData));
-      setPositions(normalizePositions(positionsData));
-      setRecentOrders(normalizeOrders(recentOrdersData));
-      setHasBrokerConnected(brokerStillConnected);
-      setLastUpdatedAt(Date.now());
-    } catch (error) {
-      console.error('Error loading default data:', error);
-
-      setMetrics({
-        totalEquity: 0,
-        buyingPower: 0,
-        dayChange: 0,
-        dayChangePercent: 0,
-        activeAlerts: 0,
-      });
-
-      setEquityData([]);
-      setPositions([]);
-      setRecentOrders([]);
-      setHasBrokerConnected(brokerStillConnected);
-      setLastUpdatedAt(Date.now());
     }
   };
 

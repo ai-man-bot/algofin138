@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { alpacaAPI, brokersAPI, webhooksAPI, getRequestMetric } from '../utils/api';
 import { normalizeBrokerConnections } from '../utils/brokerModels';
+import { hydrateScreenData, loadScreenData } from '../utils/screenLoader';
 import { NewOpenTradesTable, OrdersTable } from './NewTables';
 import { calculatePerformanceMetricsFromPairs, createTradingPairs } from '../utils/tradeAnalytics';
 import { DataRefreshBadge } from './DataRefreshBadge';
@@ -179,100 +180,108 @@ export function TradesTab({ selectedBrokerId, setSelectedBrokerId }: TradesTabPr
     try {
       setLoading(!hasVisibleData);
       setIsRefreshing(hasVisibleData);
-      
-      // Load connected brokers
+
       const brokerRows = await brokersAPI.getAll();
       const brokers = normalizeBrokerConnections(Array.isArray(brokerRows) ? brokerRows : []);
       console.log('📊 TradesTab: Loaded brokers:', brokers);
       setConnectedBrokers(brokers);
-      
-      // Filter Alpaca brokers. Support both old camelCase and new Supabase snake_case fields.
+
       const alpacaBrokers = brokers.filter((b: any) => isAlpacaBroker(b) && b.connected !== false);
-      
       console.log('📊 TradesTab: Found Alpaca brokers:', alpacaBrokers.length);
-      
-      // Set alpacaConnected based on whether we have ANY connected Alpaca brokers
-      if (alpacaBrokers.length > 0) {
-        setAlpacaConnected(true);
-      } else {
+
+      if (alpacaBrokers.length === 0) {
         setAlpacaConnected(false);
         setLoading(false);
         return;
       }
-      
-      // If no broker is selected and we have Alpaca brokers, select the first one
+
+      setAlpacaConnected(true);
+
       if (!selectedBrokerId && alpacaBrokers.length > 0) {
         setSelectedBrokerId(alpacaBrokers[0].id);
-        return; // Will trigger re-render with selected broker
+        return;
       }
-      
-      // Fetch webhook events
-      let webhookEventsData = [];
-      try {
-        const eventsData = await webhooksAPI.getEvents('all');
-        webhookEventsData = Array.isArray(eventsData) ? eventsData : [];
-        console.log('Loaded webhook events:', webhookEventsData.length);
-        console.log('Event data:', webhookEventsData);
-      } catch (error) {
-        console.error('Error loading webhook events:', error);
-      }
-      console.log('TradesTab: Loaded webhook events:', webhookEventsData.length);
-      console.log('TradesTab: First few events:', webhookEventsData.slice(0, 3));
-      setWebhookEvents(webhookEventsData);
-      
-      // Find the selected broker
+
       const selectedBroker = alpacaBrokers.find((b: any) => b.id === selectedBrokerId);
-      
-      if (selectedBroker) {
-        // Fetch positions and orders from Alpaca for the selected broker
-        console.log(`📊 TradesTab: Fetching data for broker ${selectedBrokerId}`);
-        const [positionsResponse, ordersResponse] = await Promise.all([
-          alpacaAPI.getPositions(selectedBrokerId).catch((error: any) => ({ error })),
-          alpacaAPI.getOrders(selectedBrokerId, 'all', 500).catch((error: any) => ({ error })),
-        ]);
-        
-        if (positionsResponse?.error || ordersResponse?.error) {
-          console.error('TradesTab: Alpaca data load failed:', { positionsResponse, ordersResponse });
-          setAlpacaConnected(false);
-          setPositions([]);
-          setOrders([]);
-        } else {
-          const positionsData = Array.isArray(positionsResponse) ? positionsResponse : [];
-          const ordersData = Array.isArray(ordersResponse) ? ordersResponse : [];
-
-          setAlpacaConnected(true);
-          
-          console.log('📊 Alpaca Data loaded:');
-          console.log('  - Positions:', positionsData.length);
-          console.log('  - Orders:', ordersData.length);
-          
-          setPositions(positionsData);
-          setOrders(ordersData);
-          
-          // Fetch quotes for all unique symbols. Do not fail the tab if quote endpoint is unavailable.
-          const symbols = Array.from(new Set([
-            ...positionsData.map((p: any) => p.symbol).filter(Boolean),
-            ...ordersData.map((o: any) => o.symbol).filter(Boolean)
-          ]));
-          
-          if (symbols.length > 0) {
-            try {
-              const quotesData = await alpacaAPI.getQuotes(symbols);
-              setQuotes(quotesData?.quotes || {});
-            } catch (quoteError) {
-              console.warn('TradesTab: quote fetch failed; continuing without quotes', quoteError);
-              setQuotes({});
-            }
-          } else {
-            setQuotes({});
-          }
-
-          setLastUpdatedAt(Date.now());
-        }
-      } else {
+      if (!selectedBroker) {
         setAlpacaConnected(false);
         setPositions([]);
         setOrders([]);
+        return;
+      }
+
+      const requests = [
+        {
+          key: 'webhookEvents',
+          path: '/webhooks/all/events',
+          load: () => webhooksAPI.getAllEvents().catch(() => []),
+          map: (events: any[]) => (Array.isArray(events) ? events : []),
+        },
+        {
+          key: 'positions',
+          path: '/alpaca/positions',
+          load: () => alpacaAPI.getPositions(selectedBrokerId).catch(() => []),
+          map: (items: any[]) => (Array.isArray(items) ? items : []),
+        },
+        {
+          key: 'orders',
+          path: '/alpaca/orders?status=all&limit=500',
+          load: () => alpacaAPI.getOrders(selectedBrokerId, 'all', 500).catch(() => []),
+          map: (items: any[]) => (Array.isArray(items) ? items : []),
+        },
+      ];
+
+      const cached = hydrateScreenData<{
+        webhookEvents: any[];
+        positions: any[];
+        orders: any[];
+      }>(requests);
+
+      if (cached.hasCachedData) {
+        setWebhookEvents(cached.data.webhookEvents ?? []);
+        setPositions(cached.data.positions ?? []);
+        setOrders(cached.data.orders ?? []);
+        setLastUpdatedAt(cached.updatedAt);
+      }
+
+      console.log(`📊 TradesTab: Fetching data for broker ${selectedBrokerId}`);
+      const loaded = await loadScreenData<{
+        webhookEvents: any[];
+        positions: any[];
+        orders: any[];
+      }>(requests);
+
+      const nextWebhookEvents = loaded.data.webhookEvents ?? [];
+      const nextPositions = loaded.data.positions ?? [];
+      const nextOrders = loaded.data.orders ?? [];
+
+      console.log('TradesTab: Loaded webhook events:', nextWebhookEvents.length);
+      console.log('TradesTab: First few events:', nextWebhookEvents.slice(0, 3));
+      console.log('📊 Alpaca Data loaded:');
+      console.log('  - Positions:', nextPositions.length);
+      console.log('  - Orders:', nextOrders.length);
+
+      setWebhookEvents(nextWebhookEvents);
+      setPositions(nextPositions);
+      setOrders(nextOrders);
+      setAlpacaConnected(true);
+      setLastUpdatedAt(loaded.updatedAt ?? Date.now());
+
+      const symbols = Array.from(new Set([
+        ...nextPositions.map((p: any) => p.symbol).filter(Boolean),
+        ...nextOrders.map((o: any) => o.symbol).filter(Boolean),
+      ]));
+
+      if (symbols.length > 0) {
+        try {
+          const quotesData = await alpacaAPI.getQuotes(symbols);
+          setQuotes(quotesData?.quotes || {});
+        } catch (quoteError) {
+          console.warn('TradesTab: quote fetch failed; continuing without quotes', quoteError);
+          setQuotes({});
+        }
+      } else {
+        setQuotes({});
       }
     } catch (error) {
       console.error('Error loading data:', error);
