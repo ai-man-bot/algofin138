@@ -1,5 +1,10 @@
 import { projectId } from './supabase/info.ts';
 import { requestCache, type CacheSnapshot } from './requestCache.ts';
+import {
+  normalizeBrokerConnections,
+  normalizeBrokerSnapshot,
+  type NormalizedBrokerSnapshot,
+} from './brokerModels.ts';
 
 const BASE_URL = `https://${projectId}.supabase.co/functions/v1/webhook-listener`;
 
@@ -34,6 +39,10 @@ let authErrorCallback: (() => void) | null = null;
 ========================= */
 
 export function setAccessToken(token: string | null) {
+  if (accessToken !== token) {
+    requestCache.clear();
+  }
+
   accessToken = token;
 
   if (typeof window === 'undefined') return;
@@ -283,6 +292,43 @@ export const alpacaAPI = {
 };
 
 /* =========================
+   PLATFORM BROKER FACADE
+========================= */
+
+export const platformBrokerAPI = {
+  getConnections: async () => {
+    const brokers = await brokersAPI.getAll();
+    return normalizeBrokerConnections(Array.isArray(brokers) ? brokers : []);
+  },
+
+  getSnapshot: async (brokerId?: string): Promise<NormalizedBrokerSnapshot | null> => {
+    const connections = await platformBrokerAPI.getConnections();
+    const connectedConnections = connections.filter((connection) => connection.connected);
+    const selectedConnection =
+      connectedConnections.find((connection) => connection.id === brokerId) ||
+      connectedConnections[0] ||
+      null;
+
+    if (!selectedConnection) {
+      return null;
+    }
+
+    const [account, positions, orders] = await Promise.all([
+      alpacaAPI.getAccount(selectedConnection.id).catch(() => null),
+      alpacaAPI.getPositions(selectedConnection.id).catch(() => []),
+      alpacaAPI.getOrders(selectedConnection.id, 'all', 500).catch(() => []),
+    ]);
+
+    return normalizeBrokerSnapshot({
+      connection: selectedConnection,
+      account,
+      positions: Array.isArray(positions) ? positions : [],
+      orders: Array.isArray(orders) ? orders : [],
+    });
+  },
+};
+
+/* =========================
    STRATEGIES
 ========================= */
 
@@ -502,11 +548,12 @@ export const tradeAssistantAPI = {
       }),
     }),
 
-  confirm: (requestId: string) =>
-    apiRequest('/trade-assistant/confirm', {
+  confirm: (requestId: string, overrides: Record<string, any> = {}) =>
+    mutate('/trade-assistant/confirm', {
       method: 'POST',
       body: JSON.stringify({
         request_id: requestId,
+        overrides,
       }),
-    }),
+    }, ['/trades', '/dashboard', '/analytics', '/strategies', '/alpaca']),
 };

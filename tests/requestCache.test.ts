@@ -55,4 +55,55 @@ assert.deepEqual(cache.peek('portfolio'), { version: 2 });
 cache.invalidate('port');
 assert.equal(cache.peek('portfolio'), undefined);
 
+const dedupeCache = createRequestCache(() => 10);
+let dedupedFetchCount = 0;
+let resolveDedupedFetch: ((value: { ok: boolean }) => void) | null = null;
+const pendingA = dedupeCache.load(
+  'brokers',
+  () =>
+    new Promise<{ ok: boolean }>((resolve) => {
+      dedupedFetchCount += 1;
+      resolveDedupedFetch = resolve;
+    }),
+);
+const pendingB = dedupeCache.load(
+  'brokers',
+  async () => {
+    dedupedFetchCount += 1;
+    return { ok: false };
+  },
+);
+
+assert.equal(dedupedFetchCount, 1);
+assert.equal(dedupeCache.getStatus('brokers').state, 'refreshing');
+
+resolveDedupedFetch?.({ ok: true });
+assert.deepEqual(await pendingA, { ok: true });
+assert.deepEqual(await pendingB, { ok: true });
+assert.deepEqual(dedupeCache.peek('brokers'), { ok: true });
+assert.equal(dedupeCache.getStatus('brokers').state, 'ready');
+assert.equal(dedupeCache.getStatus('brokers').error, null);
+
+const statusEvents: string[] = [];
+const unsubscribe = dedupeCache.subscribe('brokers', (status) => {
+  statusEvents.push(status.state);
+});
+
+await dedupeCache.load(
+  'brokers',
+  async () => {
+    dedupedFetchCount += 1;
+    throw new Error('network down');
+  },
+  { forceRefresh: true },
+).catch(() => null);
+
+unsubscribe();
+
+assert.deepEqual(dedupeCache.peek('brokers'), { ok: true });
+assert.equal(dedupeCache.getStatus('brokers').state, 'error');
+assert.equal(dedupeCache.getStatus('brokers').error?.message, 'network down');
+assert.ok(statusEvents.includes('refreshing'));
+assert.ok(statusEvents.includes('error'));
+
 console.log('requestCache tests passed');

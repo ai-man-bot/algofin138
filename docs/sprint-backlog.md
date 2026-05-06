@@ -1,6 +1,6 @@
 # Sprint Roadmap
 
-Last updated: 2026-04-24
+Last updated: 2026-05-06
 
 This document converts the current enhancement backlog into a 3-sprint implementation roadmap with estimates, dependencies, and phased delivery targets.
 
@@ -215,3 +215,31 @@ If the team is small, Sprint 3 should be treated as a controlled phase-1 deliver
 1. Finish caching and platform decisions first
 2. Build broker abstraction and risk controls second
 3. Deliver limited OMS/EMS plus limited options support on top of those foundations
+
+## Sprint 1 Implementation Status
+
+Status as of 2026-05-06:
+
+- Shared request cache exists in `src/utils/requestCache.ts` with stale-while-revalidate behavior, in-flight request deduplication, invalidation, request status snapshots, and status subscriptions.
+- Cacheable read APIs in `src/utils/api.ts` use the shared cache so tab switches can reuse recent data while background refreshes update stale entries.
+- Mutating APIs invalidate related cache prefixes after successful create, update, delete, sync, and confirmation operations.
+- `App.tsx` keeps authenticated screens mounted after first visit, preserving screen state while users switch tabs.
+- TradingView replacement decision is documented in `docs/adr-001-tradingview-replacement-stack.md`.
+- Broker-domain target model for Sprint 2 is documented in `docs/broker-domain-model-spec.md`.
+
+## Sprint 2 Implementation Status
+
+Status as of 2026-05-06:
+
+- Normalized broker snapshots are available through `normalizeBrokerSnapshot` in `src/utils/brokerModels.ts`.
+- The frontend API exposes `platformBrokerAPI` in `src/utils/api.ts` so dashboard and trades read paths can consume normalized broker connections, accounts, positions, orders, and open orders.
+- Dashboard and Trades tab primary broker-loading paths now use the normalized platform broker facade instead of directly binding to Alpaca response shapes.
+- Risk evaluation now blocks unauthorized users, unsupported asset classes by broker capability, insufficient buying power, kill switch, restricted symbols, and allowlist violations.
+- Risk audit records can be generated with `createRiskAuditRecord` in `src/utils/riskEngine.ts`.
+- Trade Assistant confirmation now evaluates risk before submitting to Alpaca and returns a risk block response before order submission when controls fail.
+
+Remaining Sprint 2 hardening:
+
+- Add durable database migrations or table setup for `risk_settings` and `risk_audit_records` in the linked Supabase project.
+- Move webhook and strategy-triggered order paths through the same shared risk gate used by Trade Assistant.
+- Add an admin-facing risk settings/audit UI so users can configure kill switch, authorized users, allowlists, restricted symbols, and view risk decisions.

@@ -95,6 +95,14 @@ export interface NormalizedBrokerOrder {
   updated_at: string | null;
 }
 
+export interface NormalizedBrokerSnapshot {
+  connection: NormalizedBrokerConnection;
+  account: NormalizedBrokerAccount;
+  positions: NormalizedBrokerPosition[];
+  orders: NormalizedBrokerOrder[];
+  openOrders: NormalizedBrokerOrder[];
+}
+
 function toNumber(value: NumericLike, fallback = 0) {
   if (typeof value === 'number') {
     return Number.isFinite(value) ? value : fallback;
@@ -118,7 +126,7 @@ function toPercent(value: NumericLike) {
 }
 
 function resolveBrokerProvider(broker: any): BrokerProvider {
-  const type = String(broker?.brokerType || broker?.provider || broker?.id || '')
+  const type = String(broker?.brokerType || broker?.broker_type || broker?.provider || broker?.id || '')
     .toLowerCase()
     .trim();
 
@@ -339,4 +347,24 @@ export function normalizeAlpacaOrder(order: any): NormalizedBrokerOrder {
 
 export function normalizeAlpacaOrders(orders: any[] = []) {
   return Array.isArray(orders) ? orders.map(normalizeAlpacaOrder) : [];
+}
+
+export function normalizeBrokerSnapshot(input: {
+  connection: any;
+  account?: any;
+  positions?: any[];
+  orders?: any[];
+}): NormalizedBrokerSnapshot {
+  const connection = normalizeBrokerConnection(input.connection);
+  const account = normalizeAlpacaAccount(input.account || {});
+  const positions = normalizeAlpacaPositions(input.positions || []);
+  const orders = normalizeAlpacaOrders(input.orders || []);
+
+  return {
+    connection,
+    account,
+    positions,
+    orders,
+    openOrders: orders.filter((order) => order.isOpen),
+  };
 }

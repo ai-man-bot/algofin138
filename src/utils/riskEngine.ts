@@ -1,10 +1,12 @@
 import type {
   NormalizedBrokerAccount,
+  NormalizedBrokerConnection,
   NormalizedBrokerOrder,
   NormalizedBrokerPosition,
 } from './brokerModels.ts';
 
 type RiskStatus = 'allow' | 'warn' | 'block';
+type RiskAssetClass = 'equity' | 'option' | 'crypto';
 
 export interface RiskIssue {
   code: string;
@@ -25,6 +27,7 @@ export interface RiskStrategyConfig {
 
 export interface RiskSettings {
   killSwitchEnabled?: boolean;
+  authorizedUserIds?: string[] | null;
 }
 
 export interface RiskOrderRequest {
@@ -32,6 +35,7 @@ export interface RiskOrderRequest {
   side: string;
   quantity: number;
   orderType?: string;
+  assetClass?: RiskAssetClass;
   limitPrice?: number;
   stopPrice?: number;
   marketPrice?: number;
@@ -41,6 +45,7 @@ export interface RiskOrderRequest {
 export interface RiskEvaluationInput {
   userId: string;
   order: RiskOrderRequest;
+  broker?: Pick<NormalizedBrokerConnection, 'id' | 'provider' | 'capabilities'>;
   account: Pick<NormalizedBrokerAccount, 'equity' | 'buyingPower' | 'dayChange' | 'dayChangePercent' | 'notionalExposure'>;
   positions: Array<Pick<NormalizedBrokerPosition, 'symbol' | 'quantity' | 'marketValue' | 'unrealizedPnL'>>;
   openOrders: Array<Pick<NormalizedBrokerOrder, 'id' | 'symbol' | 'side' | 'status' | 'quantity' | 'averageFillPrice'>>;
@@ -54,6 +59,21 @@ export interface RiskDecision {
   summary: string;
   estimatedOrderNotional: number;
   projectedNotionalExposure: number;
+}
+
+export interface RiskAuditRecord {
+  id: string;
+  userId: string;
+  source: string;
+  brokerId: string | null;
+  status: RiskStatus;
+  summary: string;
+  issueCodes: string[];
+  issues: RiskIssue[];
+  estimatedOrderNotional: number;
+  projectedNotionalExposure: number;
+  order: RiskOrderRequest;
+  createdAt: string;
 }
 
 function toFiniteNumber(value: number | string | null | undefined, fallback = 0) {
@@ -140,9 +160,42 @@ export function evaluateRisk(input: RiskEvaluationInput): RiskDecision {
   const riskSettings = input.riskSettings || {};
   const estimatedOrderNotional = estimateOrderNotional(input);
   const projectedNotionalExposure = toFiniteNumber(input.account.notionalExposure) + estimatedOrderNotional;
+  const authorizedUserIds = (riskSettings.authorizedUserIds || []).filter(Boolean);
 
   if (riskSettings.killSwitchEnabled) {
     issues.push(buildIssue('kill_switch', 'block', 'Account-wide kill switch is enabled.'));
+  }
+
+  if (authorizedUserIds.length > 0 && !authorizedUserIds.includes(input.userId)) {
+    issues.push(buildIssue('unauthorized_user', 'block', 'User is not authorized to submit orders for this risk profile.', {
+      userId: input.userId,
+    }));
+  }
+
+  const assetClass = input.order.assetClass || 'equity';
+  const capabilities = input.broker?.capabilities;
+  if (
+    capabilities &&
+    (
+      (assetClass === 'equity' && !capabilities.supportsEquities) ||
+      (assetClass === 'option' && !capabilities.supportsOptions) ||
+      (assetClass === 'crypto' && !capabilities.supportsCrypto)
+    )
+  ) {
+    issues.push(buildIssue('unsupported_asset_class', 'block', `${input.broker?.provider || 'Broker'} does not support ${assetClass} orders.`, {
+      assetClass,
+      brokerId: input.broker?.id,
+    }));
+  }
+
+  if (
+    String(input.order.side || '').toLowerCase() === 'buy' &&
+    estimatedOrderNotional > toFiniteNumber(input.account.buyingPower)
+  ) {
+    issues.push(buildIssue('insufficient_buying_power', 'block', 'Order notional exceeds available buying power.', {
+      estimatedOrderNotional,
+      buyingPower: input.account.buyingPower,
+    }));
   }
 
   const restrictedSymbols = (strategy.restrictedSymbols || []).map(normalizeSymbol);
@@ -206,5 +259,29 @@ export function evaluateRisk(input: RiskEvaluationInput): RiskDecision {
       : 'allow',
     estimatedOrderNotional,
     projectedNotionalExposure,
+  };
+}
+
+export function createRiskAuditRecord(input: {
+  userId: string;
+  source: string;
+  brokerId?: string | null;
+  order: RiskOrderRequest;
+  decision: RiskDecision;
+  createdAt?: string;
+}): RiskAuditRecord {
+  return {
+    id: crypto.randomUUID(),
+    userId: input.userId,
+    source: input.source,
+    brokerId: input.brokerId || null,
+    status: input.decision.status,
+    summary: input.decision.summary,
+    issueCodes: input.decision.issues.map((issue) => issue.code),
+    issues: input.decision.issues,
+    estimatedOrderNotional: input.decision.estimatedOrderNotional,
+    projectedNotionalExposure: input.decision.projectedNotionalExposure,
+    order: input.order,
+    createdAt: input.createdAt || new Date().toISOString(),
   };
 }

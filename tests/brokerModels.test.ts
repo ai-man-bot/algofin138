@@ -4,8 +4,9 @@ import {
   normalizeAlpacaAccount,
   normalizeAlpacaPosition,
   normalizeAlpacaOrder,
+  normalizeBrokerSnapshot,
 } from '../src/utils/brokerModels.ts';
-import { evaluateRisk } from '../src/utils/riskEngine.ts';
+import { createRiskAuditRecord, evaluateRisk } from '../src/utils/riskEngine.ts';
 
 const broker = normalizeBrokerConnection({
   id: 'alpaca:paper-123',
@@ -21,6 +22,14 @@ assert.equal(broker.provider, 'alpaca');
 assert.equal(broker.capabilities.supportsEquities, true);
 assert.equal(broker.capabilities.supportsOptions, false);
 assert.equal(broker.status, 'connected');
+
+const snakeCaseBroker = normalizeBrokerConnection({
+  id: 'broker-account-1',
+  broker_type: 'alpaca',
+  connected: true,
+});
+
+assert.equal(snakeCaseBroker.provider, 'alpaca');
 
 const account = normalizeAlpacaAccount({
   equity: '105000.50',
@@ -68,6 +77,55 @@ assert.equal(order.id, 'ord-1');
 assert.equal(order.quantity, 10);
 assert.equal(order.averageFillPrice, 805.5);
 assert.equal(order.status, 'filled');
+
+const snapshot = normalizeBrokerSnapshot({
+  connection: {
+    id: 'alpaca:paper-123',
+    brokerType: 'alpaca',
+    name: 'Paper Alpaca',
+    connected: true,
+  },
+  account: {
+    equity: '105000.50',
+    last_equity: '103500.25',
+    buying_power: '250000',
+    cash: '10000',
+  },
+  positions: [
+    {
+      symbol: 'NVDA',
+      qty: '10',
+      avg_entry_price: '800',
+      current_price: '840',
+      market_value: '8400',
+    },
+  ],
+  orders: [
+    {
+      id: 'open-1',
+      symbol: 'NVDA',
+      side: 'buy',
+      status: 'new',
+      qty: '5',
+    },
+    {
+      id: 'filled-1',
+      symbol: 'MSFT',
+      side: 'sell',
+      status: 'filled',
+      qty: '3',
+      filled_qty: '3',
+      filled_avg_price: '410',
+    },
+  ],
+});
+
+assert.equal(snapshot.connection.provider, 'alpaca');
+assert.equal(snapshot.account.buyingPower, 250000);
+assert.equal(snapshot.positions[0].symbol, 'NVDA');
+assert.equal(snapshot.orders.length, 2);
+assert.equal(snapshot.openOrders.length, 1);
+assert.equal(snapshot.openOrders[0].id, 'open-1');
 
 const riskDecision = evaluateRisk({
   userId: 'user-1',
@@ -155,5 +213,82 @@ const blockedDecision = evaluateRisk({
 assert.equal(blockedDecision.status, 'block');
 assert.ok(blockedDecision.issues.some((issue) => issue.code === 'kill_switch'));
 assert.ok(blockedDecision.issues.some((issue) => issue.code === 'restricted_symbol'));
+
+const capabilityDecision = evaluateRisk({
+  userId: 'user-2',
+  order: {
+    symbol: 'AAPL250117C00200000',
+    side: 'buy',
+    quantity: 1,
+    orderType: 'limit',
+    limitPrice: 5,
+    assetClass: 'option',
+    requestedAt: '2026-04-24T10:30:00Z',
+  },
+  broker: snapshot.connection,
+  account: {
+    equity: 100000,
+    buyingPower: 1000,
+    dayChange: 0,
+    dayChangePercent: 0,
+    notionalExposure: 0,
+  },
+  positions: [],
+  openOrders: [],
+  riskSettings: {
+    authorizedUserIds: ['user-1'],
+  },
+});
+
+assert.equal(capabilityDecision.status, 'block');
+assert.ok(capabilityDecision.issues.some((issue) => issue.code === 'unauthorized_user'));
+assert.ok(capabilityDecision.issues.some((issue) => issue.code === 'unsupported_asset_class'));
+
+const buyingPowerDecision = evaluateRisk({
+  userId: 'user-1',
+  order: {
+    symbol: 'TSLA',
+    side: 'buy',
+    quantity: 10,
+    orderType: 'limit',
+    limitPrice: 300,
+    assetClass: 'equity',
+  },
+  broker: snapshot.connection,
+  account: {
+    equity: 10000,
+    buyingPower: 1000,
+    dayChange: 0,
+    dayChangePercent: 0,
+    notionalExposure: 0,
+  },
+  positions: [],
+  openOrders: [],
+});
+
+assert.equal(buyingPowerDecision.status, 'block');
+assert.ok(buyingPowerDecision.issues.some((issue) => issue.code === 'insufficient_buying_power'));
+
+const auditRecord = createRiskAuditRecord({
+  userId: 'user-1',
+  source: 'trade_assistant',
+  brokerId: snapshot.connection.id,
+  order: {
+    symbol: 'TSLA',
+    side: 'buy',
+    quantity: 10,
+    orderType: 'limit',
+    limitPrice: 300,
+    assetClass: 'equity',
+  },
+  decision: buyingPowerDecision,
+  createdAt: '2026-04-24T10:31:00Z',
+});
+
+assert.equal(auditRecord.userId, 'user-1');
+assert.equal(auditRecord.brokerId, 'alpaca:paper-123');
+assert.equal(auditRecord.status, 'block');
+assert.equal(auditRecord.issueCodes.includes('insufficient_buying_power'), true);
+assert.equal(auditRecord.order.symbol, 'TSLA');
 
 console.log('broker model and risk engine tests passed');
