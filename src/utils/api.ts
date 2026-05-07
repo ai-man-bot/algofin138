@@ -557,3 +557,42 @@ export const tradeAssistantAPI = {
       }),
     }, ['/trades', '/dashboard', '/analytics', '/strategies', '/alpaca']),
 };
+
+/* =========================
+   PLATFORM ORDER ROUTING
+========================= */
+
+export const platformOrdersAPI = {
+  route: (payload: any) =>
+    mutate('/platform-orders/route', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, ['/trades', '/dashboard', '/analytics', '/strategies', '/alpaca']),
+
+  reconcile: (orderId: string, updates: any[]) =>
+    mutate(`/platform-orders/${orderId}/reconcile`, {
+      method: 'POST',
+      body: JSON.stringify({ updates }),
+    }, ['/trades', '/dashboard', '/analytics', '/alpaca']),
+};
+
+/* =========================
+   STRATEGY AUTOMATION
+========================= */
+
+export const strategyAutomationAPI = {
+  getSchedules: (options: CachedRequestOptions = {}) =>
+    cachedApiRequest('/strategy-automation/schedules', { method: 'GET', ttlMs: 30_000, ...options }),
+
+  saveSchedule: (strategyId: string, payload: any) =>
+    mutate(`/strategy-automation/schedules/${strategyId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }, ['/strategy-automation/schedules']),
+
+  run: (strategyId: string, payload: any = {}) =>
+    mutate('/strategy-automation/run', {
+      method: 'POST',
+      body: JSON.stringify({ strategy_id: strategyId, ...payload }),
+    }, ['/strategy-automation/schedules', '/trades', '/dashboard', '/analytics']),
+};

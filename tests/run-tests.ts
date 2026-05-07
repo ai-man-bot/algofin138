@@ -1,6 +1,8 @@
 import './requestCache.test.ts';
 import './apiCache.test.ts';
 import './brokerModels.test.ts';
+import './sprint3OrderLifecycle.test.ts';
+import './remainingSprints.test.ts';
 import assert from 'node:assert/strict';
 import {
   calculateBacktestMetrics,
