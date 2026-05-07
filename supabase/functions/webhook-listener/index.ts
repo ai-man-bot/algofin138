@@ -16,6 +16,12 @@ import {
   dedupeBrokerAccounts,
   findConflictingBrokerAccountIds,
 } from "../../../src/utils/brokerConnectionMaintenance.ts";
+import {
+  buildLegacyBacktestKey,
+  buildLegacyStrategyKey,
+  buildLegacyStrategyWebhookUrl,
+  buildLegacyTradePrefix,
+} from "../../../src/utils/legacyStrategyRoutes.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -168,6 +174,46 @@ async function proxyAlpacaJson(url: string, headers: Record<string, string>) {
     ok: true,
     status: response.status,
     data,
+  };
+}
+
+async function getKvValue(supabase: any, key: string) {
+  const { data, error } = await supabase
+    .from("kv_store_f118884a")
+    .select("value")
+    .eq("key", key)
+    .maybeSingle();
+
+  return { value: data?.value ?? null, error: error?.message ?? null };
+}
+
+async function setKvValue(supabase: any, key: string, value: unknown) {
+  const { error } = await supabase
+    .from("kv_store_f118884a")
+    .upsert({ key, value }, { onConflict: "key" });
+
+  return error?.message ?? null;
+}
+
+async function deleteKvValue(supabase: any, key: string) {
+  const { error } = await supabase
+    .from("kv_store_f118884a")
+    .delete()
+    .eq("key", key);
+
+  return error?.message ?? null;
+}
+
+async function listKvPrefix(supabase: any, prefix: string) {
+  const { data, error } = await supabase
+    .from("kv_store_f118884a")
+    .select("key, value, updated_at")
+    .like("key", `${prefix}%`)
+    .order("updated_at", { ascending: false });
+
+  return {
+    rows: Array.isArray(data) ? data : [],
+    error: error?.message ?? null,
   };
 }
 
@@ -540,6 +586,210 @@ async function handleAlpacaReadRoute(req: Request, url: URL, supabase: any, user
   return null;
 }
 
+async function handleLegacyStrategyRoutes(req: Request, url: URL, supabase: any, userId: string) {
+  const path = url.pathname;
+
+  if (path.endsWith("/strategies") && req.method === "GET") {
+    const { rows, error } = await listKvPrefix(supabase, `user:${userId}:strategy:`);
+    if (error) {
+      return jsonResponse({ error: "Failed to fetch strategies", details: error }, 500);
+    }
+
+    return jsonResponse(rows.map((row: any) => row.value ?? {}).filter(Boolean));
+  }
+
+  if (path.endsWith("/strategies") && req.method === "POST") {
+    const strategy = await readJson(req);
+    const strategyId = crypto.randomUUID();
+    const createdAt = new Date().toISOString();
+    let webhookToken = strategy.webhookToken ?? strategy.webhook_token ?? null;
+    let webhookUrl = strategy.webhookUrl ?? strategy.webhook_url ?? null;
+
+    if ((strategy.strategyType ?? strategy.strategy_type) === "tradingview") {
+      webhookToken = webhookToken || crypto.randomUUID();
+      const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+      webhookUrl = buildLegacyStrategyWebhookUrl(supabaseUrl, strategyId, webhookToken);
+    }
+
+    const storedStrategy = {
+      ...strategy,
+      id: strategyId,
+      userId,
+      webhookToken,
+      webhookUrl,
+      createdAt,
+      updatedAt: createdAt,
+    };
+
+    const error = await setKvValue(supabase, buildLegacyStrategyKey(userId, strategyId), storedStrategy);
+    return error
+      ? jsonResponse({ error: "Failed to create strategy", details: error }, 500)
+      : jsonResponse({ success: true, strategyId, webhookUrl, strategy: storedStrategy }, 201);
+  }
+
+  if (path.endsWith("/strategies/clear-risk-settings") && req.method === "POST") {
+    const { rows, error } = await listKvPrefix(supabase, `user:${userId}:strategy:`);
+    if (error) {
+      return jsonResponse({ error: "Failed to clear risk settings", details: error }, 500);
+    }
+
+    let updatedCount = 0;
+    for (const row of rows) {
+      const strategy = row?.value ?? {};
+      const key = row?.key;
+      if (!key) continue;
+
+      const updatedStrategy = {
+        ...strategy,
+        maxPositions: null,
+        maxDailyLoss: null,
+        tradingHoursStart: null,
+        tradingHoursEnd: null,
+        symbols: "",
+        updatedAt: new Date().toISOString(),
+      };
+      const saveError = await setKvValue(supabase, key, updatedStrategy);
+      if (!saveError) updatedCount += 1;
+    }
+
+    return jsonResponse({
+      success: true,
+      message: `Risk settings cleared for ${updatedCount} strategies`,
+      updatedCount,
+    });
+  }
+
+  const strategyBacktestMatch = path.match(/\/strategies\/([^/]+)\/backtests$/);
+  if (strategyBacktestMatch && req.method === "GET") {
+    const strategyId = strategyBacktestMatch[1];
+    const { rows, error } = await listKvPrefix(supabase, `user:${userId}:backtest:`);
+    if (error) {
+      return jsonResponse({ error: "Failed to fetch backtests", details: error }, 500);
+    }
+
+    const backtests = rows
+      .map((row: any) => row.value ?? {})
+      .filter((item: any) => item?.strategyId === strategyId);
+    return jsonResponse(backtests);
+  }
+
+  const strategyTradesMatch = path.match(/\/strategies\/([^/]+)\/trades$/);
+  if (strategyTradesMatch && req.method === "GET") {
+    const strategyId = strategyTradesMatch[1];
+    const { rows, error } = await listKvPrefix(supabase, buildLegacyTradePrefix(userId));
+    if (error) {
+      return jsonResponse({ error: "Failed to fetch strategy trades", details: error }, 500);
+    }
+
+    const trades = rows
+      .map((row: any) => row.value ?? {})
+      .filter((item: any) => item?.strategyId === strategyId);
+    return jsonResponse(trades);
+  }
+
+  const strategySyncMatch = path.match(/\/strategies\/([^/]+)\/sync-trades$/);
+  if (strategySyncMatch && req.method === "POST") {
+    return jsonResponse({
+      success: true,
+      updatedCount: 0,
+      deletedCount: 0,
+      message: "Legacy strategy trade sync is currently a no-op on the Supabase backend.",
+    });
+  }
+
+  const strategyBacktestRunMatch = path.match(/\/strategies\/([^/]+)\/backtest$/);
+  if (strategyBacktestRunMatch && req.method === "POST") {
+    const strategyId = strategyBacktestRunMatch[1];
+    const { value: strategy, error: strategyError } = await getKvValue(
+      supabase,
+      buildLegacyStrategyKey(userId, strategyId),
+    );
+
+    if (strategyError || !strategy) {
+      return jsonResponse({ error: strategyError || "Strategy not found" }, 404);
+    }
+
+    const body = await readJson(req);
+    const backtestId = crypto.randomUUID();
+    const initialCapital = Number(body.initialCapital ?? 100000);
+    const storedBacktest = {
+      id: backtestId,
+      strategyId,
+      strategyName: strategy.name,
+      startDate: body.startDate ?? null,
+      endDate: body.endDate ?? null,
+      initialCapital,
+      results: {
+        totalTrades: 0,
+        winningTrades: 0,
+        losingTrades: 0,
+        winRate: 0,
+        totalReturn: 0,
+        finalEquity: initialCapital,
+        initialCapital,
+        netProfit: 0,
+        avgWin: 0,
+        avgLoss: 0,
+        profitFactor: 0,
+        maxDrawdown: 0,
+        sharpeRatio: 0,
+        equityCurve: [],
+      },
+      createdAt: new Date().toISOString(),
+    };
+
+    const error = await setKvValue(supabase, buildLegacyBacktestKey(userId, backtestId), storedBacktest);
+    return error
+      ? jsonResponse({ error: "Failed to run backtest", details: error }, 500)
+      : jsonResponse({ success: true, backtestId, results: storedBacktest.results });
+  }
+
+  const strategyMatch = path.match(/\/strategies\/([^/]+)$/);
+  if (strategyMatch && req.method === "PUT") {
+    const strategyId = strategyMatch[1];
+    const key = buildLegacyStrategyKey(userId, strategyId);
+    const { value: existing, error: existingError } = await getKvValue(supabase, key);
+    if (existingError || !existing) {
+      return jsonResponse({ error: existingError || "Strategy not found" }, 404);
+    }
+
+    const updates = await readJson(req);
+    let updatedStrategy = {
+      ...existing,
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (
+      (updates.strategyType ?? updates.strategy_type) === "tradingview" &&
+      !updatedStrategy.webhookToken
+    ) {
+      const webhookToken = crypto.randomUUID();
+      const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+      updatedStrategy = {
+        ...updatedStrategy,
+        webhookToken,
+        webhookUrl: buildLegacyStrategyWebhookUrl(supabaseUrl, strategyId, webhookToken),
+      };
+    }
+
+    const error = await setKvValue(supabase, key, updatedStrategy);
+    return error
+      ? jsonResponse({ error: "Failed to update strategy", details: error }, 500)
+      : jsonResponse({ success: true, strategy: updatedStrategy });
+  }
+
+  if (strategyMatch && req.method === "DELETE") {
+    const strategyId = strategyMatch[1];
+    const error = await deleteKvValue(supabase, buildLegacyStrategyKey(userId, strategyId));
+    return error
+      ? jsonResponse({ error: "Failed to delete strategy", details: error }, 500)
+      : jsonResponse({ success: true });
+  }
+
+  return null;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -600,6 +850,13 @@ Deno.serve(async (req: Request) => {
   }
 
   if (
+    path.endsWith("/strategies") ||
+    path.endsWith("/strategies/clear-risk-settings") ||
+    path.match(/\/strategies\/[^/]+$/) ||
+    path.match(/\/strategies\/[^/]+\/backtest$/) ||
+    path.match(/\/strategies\/[^/]+\/backtests$/) ||
+    path.match(/\/strategies\/[^/]+\/trades$/) ||
+    path.match(/\/strategies\/[^/]+\/sync-trades$/) ||
     path.endsWith("/alpaca/account") ||
     path.endsWith("/alpaca/positions") ||
     path.endsWith("/alpaca/orders") ||
@@ -622,6 +879,11 @@ Deno.serve(async (req: Request) => {
 
     if (authError || !userId) {
       return jsonResponse({ error: authError }, 401);
+    }
+
+    const legacyStrategyRouteResponse = await handleLegacyStrategyRoutes(req, url, supabase, userId);
+    if (legacyStrategyRouteResponse) {
+      return legacyStrategyRouteResponse;
     }
 
     const alpacaRouteResponse = await handleAlpacaReadRoute(req, url, supabase, userId);

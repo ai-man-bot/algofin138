@@ -10,6 +10,7 @@ import './strategyLabRouting.test.ts';
 import './webhookRouteMatching.test.ts';
 import './alpacaApiPaths.test.ts';
 import './brokerConnectionMaintenance.test.ts';
+import './legacyStrategyRoutes.test.ts';
 import assert from 'node:assert/strict';
 import {
   calculateBacktestMetrics,

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { alpacaAPI, brokersAPI, getCachedRequestSnapshot, getRequestMetrics, notificationsAPI, strategyLabAPI, testWebhook } from '../src/utils/api.ts';
+import { alpacaAPI, brokersAPI, getCachedRequestSnapshot, getRequestMetrics, notificationsAPI, strategiesAPI, strategyLabAPI, testWebhook } from '../src/utils/api.ts';
 
 const originalFetch = globalThis.fetch;
 
@@ -58,8 +58,12 @@ await alpacaAPI.getAccount('alpaca:PA3A82Y1AMF0', { forceRefresh: true }).catch(
 await alpacaAPI.getPositions('alpaca:PA3A82Y1AMF0', { forceRefresh: true }).catch(() => []);
 await alpacaAPI.getOrders('alpaca:PA3A82Y1AMF0', 'all', 500, { forceRefresh: true }).catch(() => []);
 await alpacaAPI.getPortfolioHistory('alpaca:PA3A82Y1AMF0', '1M', '1D').catch(() => null);
+await strategiesAPI.getAll({ forceRefresh: true }).catch(() => []);
+await strategiesAPI.create({ name: 'Legacy Strategy', strategyType: 'tradingview' }).catch(() => null);
+await strategiesAPI.update('legacy-strategy-1', { status: 'active' }).catch(() => null);
+await strategiesAPI.delete('legacy-strategy-1').catch(() => null);
 
-assert.equal(fetchCount, 21);
+assert.equal(fetchCount, 25);
 
 const metrics = getRequestMetrics();
 assert.ok(metrics.some((metric) => metric.path === '/brokers' && metric.method === 'GET'));
@@ -82,6 +86,10 @@ assert.ok(metrics.some((metric) => metric.path === '/alpaca/account?brokerId=alp
 assert.ok(metrics.some((metric) => metric.path === '/alpaca/positions?brokerId=alpaca%3APA3A82Y1AMF0' && metric.method === 'GET'));
 assert.ok(metrics.some((metric) => metric.path === '/alpaca/orders?brokerId=alpaca%3APA3A82Y1AMF0&status=all&limit=500' && metric.method === 'GET'));
 assert.ok(metrics.some((metric) => metric.path === '/alpaca/portfolio-history?brokerId=alpaca%3APA3A82Y1AMF0&period=1M&timeframe=1D' && metric.method === 'GET'));
+assert.ok(metrics.some((metric) => metric.path === '/strategies' && metric.method === 'GET'));
+assert.ok(metrics.some((metric) => metric.path === '/strategies' && metric.method === 'POST'));
+assert.ok(metrics.some((metric) => metric.path === '/strategies/legacy-strategy-1' && metric.method === 'PUT'));
+assert.ok(metrics.some((metric) => metric.path === '/strategies/legacy-strategy-1' && metric.method === 'DELETE'));
 
 if (originalFetch) {
   globalThis.fetch = originalFetch;
