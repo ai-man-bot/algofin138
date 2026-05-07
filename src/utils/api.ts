@@ -1,5 +1,6 @@
 import { projectId } from './supabase/info.ts';
 import { requestCache, type CacheSnapshot } from './requestCache.ts';
+import { buildAlpacaApiPath } from './alpacaApiPaths.ts';
 import {
   normalizeBrokerConnections,
   normalizeBrokerSnapshot,
@@ -245,33 +246,32 @@ export const dashboardAPI = {
 ========================= */
 
 export const alpacaAPI = {
-  getAccount: (_brokerId?: string, options: CachedRequestOptions = {}) =>
-    cachedApiRequest('/alpaca/account', { method: 'GET', ttlMs: 10_000, ...options }),
+  getAccount: (brokerId?: string, options: CachedRequestOptions = {}) =>
+    cachedApiRequest(buildAlpacaApiPath('/alpaca/account', brokerId), { method: 'GET', ttlMs: 10_000, ...options }),
 
-  getPositions: (_brokerId?: string, options: CachedRequestOptions = {}) =>
-    cachedApiRequest('/alpaca/positions', { method: 'GET', ttlMs: 10_000, ...options }),
+  getPositions: (brokerId?: string, options: CachedRequestOptions = {}) =>
+    cachedApiRequest(buildAlpacaApiPath('/alpaca/positions', brokerId), { method: 'GET', ttlMs: 10_000, ...options }),
 
-  getOrders: (_brokerId?: string, status = 'all', limit = 50, options: CachedRequestOptions = {}) =>
-    cachedApiRequest(`/alpaca/orders?status=${status}&limit=${limit}`, {
+  getOrders: (brokerId?: string, status = 'all', limit = 50, options: CachedRequestOptions = {}) =>
+    cachedApiRequest(buildAlpacaApiPath('/alpaca/orders', brokerId, { status, limit }), {
       method: 'GET',
       ttlMs: 10_000,
       ...options,
     }),
 
   getPortfolioHistory: (
-    _brokerId?: string,
+    brokerId?: string,
     period = '1M',
     timeframe = '1D',
     startDate?: string,
     endDate?: string
   ) => {
-    const params = new URLSearchParams();
-    params.set('period', period);
-    params.set('timeframe', timeframe);
-    if (startDate) params.set('startDate', startDate);
-    if (endDate) params.set('endDate', endDate);
-
-    return cachedApiRequest(`/alpaca/portfolio-history?${params.toString()}`, {
+    return cachedApiRequest(buildAlpacaApiPath('/alpaca/portfolio-history', brokerId, {
+      period,
+      timeframe,
+      startDate,
+      endDate,
+    }), {
       method: 'GET',
       ttlMs: 30_000,
     });

@@ -12,12 +12,16 @@ import {
   isRootWebhookIngressPath,
   normalizeBrokerConnectPayload,
 } from "../../../src/utils/webhookRouteMatching.ts";
+import {
+  dedupeBrokerAccounts,
+  findConflictingBrokerAccountIds,
+} from "../../../src/utils/brokerConnectionMaintenance.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type, x-webhook-secret",
-  "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
 };
 
 function jsonResponse(body: unknown, status = 200) {
@@ -28,6 +32,10 @@ function jsonResponse(body: unknown, status = 200) {
       ...corsHeaders,
     },
   });
+}
+
+function getBrokerBaseUrl(broker: any) {
+  return broker?.base_url || broker?.baseUrl || "https://paper-api.alpaca.markets";
 }
 
 async function getSupabaseClient() {
@@ -66,25 +74,24 @@ async function getAuthenticatedUserId(req: Request, supabase: any) {
   return { userId: data.user.id, error: null };
 }
 
-async function getAlpacaHeaders(supabase: any, userId: string) {
-  const envKey = Deno.env.get("ALPACA_API_KEY") ?? Deno.env.get("APCA_API_KEY_ID");
-  const envSecret = Deno.env.get("ALPACA_API_SECRET") ?? Deno.env.get("APCA_API_SECRET_KEY");
-
-  if (envKey && envSecret) {
-    return {
-      headers: {
-        "APCA-API-KEY-ID": envKey,
-        "APCA-API-SECRET-KEY": envSecret,
-      },
-      error: null,
-    };
-  }
-
-  const { data: credentialRows } = await supabase
+async function getAlpacaCredentialRows(supabase: any, userId: string, brokerAccountId?: string | null) {
+  let query = supabase
     .from("broker_credentials")
     .select("api_key, api_secret, broker_account_id")
-    .eq("user_id", userId)
-    .limit(5);
+    .eq("user_id", userId);
+
+  if (brokerAccountId) {
+    query = query.eq("broker_account_id", brokerAccountId).limit(1);
+  } else {
+    query = query.limit(20);
+  }
+
+  const { data } = await query;
+  return Array.isArray(data) ? data : [];
+}
+
+async function getAlpacaHeaders(supabase: any, userId: string, brokerAccountId?: string | null) {
+  const credentialRows = await getAlpacaCredentialRows(supabase, userId, brokerAccountId);
 
   const credential = Array.isArray(credentialRows)
     ? credentialRows.find((row: any) => row.api_key && row.api_secret)
@@ -95,6 +102,19 @@ async function getAlpacaHeaders(supabase: any, userId: string) {
       headers: {
         "APCA-API-KEY-ID": credential.api_key,
         "APCA-API-SECRET-KEY": credential.api_secret,
+      },
+      error: null,
+    };
+  }
+
+  const envKey = Deno.env.get("ALPACA_API_KEY") ?? Deno.env.get("APCA_API_KEY_ID");
+  const envSecret = Deno.env.get("ALPACA_API_SECRET") ?? Deno.env.get("APCA_API_SECRET_KEY");
+
+  if (envKey && envSecret) {
+    return {
+      headers: {
+        "APCA-API-KEY-ID": envKey,
+        "APCA-API-SECRET-KEY": envSecret,
       },
       error: null,
     };
@@ -198,7 +218,7 @@ async function getRiskSettings(supabase: any, userId: string) {
 async function fetchAlpacaBrokerSnapshot(supabase: any, userId: string, brokerAccountId?: string | null) {
   const [{ broker }, { headers, error: credentialsError }] = await Promise.all([
     getPrimaryBrokerAccount(supabase, userId, brokerAccountId),
-    getAlpacaHeaders(supabase, userId),
+    getAlpacaHeaders(supabase, userId, brokerAccountId),
   ]);
 
   if (credentialsError || !headers) {
@@ -208,10 +228,11 @@ async function fetchAlpacaBrokerSnapshot(supabase: any, userId: string, brokerAc
     };
   }
 
+  const baseUrl = getBrokerBaseUrl(broker);
   const [account, positions, orders] = await Promise.all([
-    proxyAlpacaJson("https://paper-api.alpaca.markets/v2/account", headers),
-    proxyAlpacaJson("https://paper-api.alpaca.markets/v2/positions", headers),
-    proxyAlpacaJson("https://paper-api.alpaca.markets/v2/orders?status=all&limit=500&direction=desc", headers),
+    proxyAlpacaJson(`${baseUrl}/v2/account`, headers),
+    proxyAlpacaJson(`${baseUrl}/v2/positions`, headers),
+    proxyAlpacaJson(`${baseUrl}/v2/orders?status=all&limit=500&direction=desc`, headers),
   ]);
 
   if (!account.ok) {
@@ -252,7 +273,61 @@ async function listBrokerAccounts(supabase: any, userId: string) {
     return { brokers: null, error: error.message };
   }
 
-  return { brokers: data ?? [], error: null };
+  const credentialRows = await getAlpacaCredentialRows(supabase, userId);
+  return {
+    brokers: dedupeBrokerAccounts(data ?? [], credentialRows),
+    error: null,
+  };
+}
+
+async function deleteBrokerAccountIds(supabase: any, userId: string, brokerAccountIds: string[]) {
+  const ids = brokerAccountIds.filter(Boolean);
+  if (ids.length === 0) return null;
+
+  await supabase
+    .from("broker_credentials")
+    .delete()
+    .eq("user_id", userId)
+    .in("broker_account_id", ids);
+
+  const { error } = await supabase
+    .from("broker_accounts")
+    .delete()
+    .eq("user_id", userId)
+    .in("id", ids);
+
+  return error?.message ?? null;
+}
+
+async function cleanupDuplicateBrokerAccounts(
+  supabase: any,
+  userId: string,
+  input: {
+    canonicalBrokerAccountId: string;
+    brokerType: string;
+    accountNumber?: string | null;
+    apiKey?: string | null;
+    apiSecret?: string | null;
+  },
+) {
+  const [brokerRows, credentialRows] = await Promise.all([
+    supabase
+      .from("broker_accounts")
+      .select("id, broker_type, account_id, metadata, created_at, updated_at")
+      .eq("user_id", userId),
+    supabase
+      .from("broker_credentials")
+      .select("broker_account_id, api_key, api_secret")
+      .eq("user_id", userId),
+  ]);
+
+  const conflictingIds = findConflictingBrokerAccountIds({
+    brokers: brokerRows.data ?? [],
+    credentials: credentialRows.data ?? [],
+    ...input,
+  });
+
+  return deleteBrokerAccountIds(supabase, userId, conflictingIds);
 }
 
 async function upsertBrokerConnection(supabase: any, userId: string, payload: any) {
@@ -287,6 +362,17 @@ async function upsertBrokerConnection(supabase: any, userId: string, payload: an
     const metadata = {
       account: accountData,
     };
+    const duplicateCleanupError = await cleanupDuplicateBrokerAccounts(supabase, userId, {
+      canonicalBrokerAccountId: brokerAccountId,
+      brokerType,
+      accountNumber: accountData.account_number,
+      apiKey,
+      apiSecret,
+    });
+
+    if (duplicateCleanupError) {
+      return { broker: null, error: duplicateCleanupError, status: 500 };
+    }
 
     const { data: brokerRow, error: brokerError } = await supabase
       .from("broker_accounts")
@@ -371,6 +457,89 @@ async function upsertBrokerConnection(supabase: any, userId: string, payload: an
   return { broker: brokerRow, error: null, status: 200 };
 }
 
+async function getBrokerAccountAndHeaders(supabase: any, userId: string, brokerAccountId?: string | null) {
+  const [{ broker, error: brokerError }, { headers, error: headersError }] = await Promise.all([
+    getPrimaryBrokerAccount(supabase, userId, brokerAccountId),
+    getAlpacaHeaders(supabase, userId, brokerAccountId),
+  ]);
+
+  return {
+    broker,
+    headers,
+    error: brokerError || headersError,
+  };
+}
+
+async function handleAlpacaReadRoute(req: Request, url: URL, supabase: any, userId: string) {
+  const path = url.pathname;
+  const brokerAccountId = url.searchParams.get("brokerId");
+
+  if (path.endsWith("/alpaca/account") && req.method === "GET") {
+    const { broker, headers, error } = await getBrokerAccountAndHeaders(supabase, userId, brokerAccountId);
+    if (error || !headers) {
+      return jsonResponse({ error: error || "Alpaca not connected" }, 404);
+    }
+
+    const response = await proxyAlpacaJson(`${getBrokerBaseUrl(broker)}/v2/account`, headers);
+    return response.ok
+      ? jsonResponse(response.data)
+      : jsonResponse(response.data ?? { error: "Failed to fetch Alpaca account" }, response.status || 400);
+  }
+
+  if (path.endsWith("/alpaca/positions") && req.method === "GET") {
+    const { broker, headers, error } = await getBrokerAccountAndHeaders(supabase, userId, brokerAccountId);
+    if (error || !headers) {
+      return jsonResponse({ error: error || "Alpaca not connected" }, 404);
+    }
+
+    const response = await proxyAlpacaJson(`${getBrokerBaseUrl(broker)}/v2/positions`, headers);
+    return response.ok ? jsonResponse(Array.isArray(response.data) ? response.data : []) : jsonResponse([]);
+  }
+
+  if (path.endsWith("/alpaca/orders") && req.method === "GET") {
+    const { broker, headers, error } = await getBrokerAccountAndHeaders(supabase, userId, brokerAccountId);
+    if (error || !headers) {
+      return jsonResponse({ error: error || "Alpaca not connected" }, 404);
+    }
+
+    const status = url.searchParams.get("status") || "closed";
+    const limit = url.searchParams.get("limit") || "500";
+    const response = await proxyAlpacaJson(
+      `${getBrokerBaseUrl(broker)}/v2/orders?status=${encodeURIComponent(status)}&limit=${encodeURIComponent(limit)}&direction=desc`,
+      headers,
+    );
+    return response.ok ? jsonResponse(Array.isArray(response.data) ? response.data : []) : jsonResponse([]);
+  }
+
+  if (path.endsWith("/alpaca/portfolio-history") && req.method === "GET") {
+    const { broker, headers, error } = await getBrokerAccountAndHeaders(supabase, userId, brokerAccountId);
+    if (error || !headers) {
+      return jsonResponse({ error: error || "Alpaca not connected" }, 404);
+    }
+
+    const timeframe = url.searchParams.get("timeframe") || "1D";
+    const period = url.searchParams.get("period") || "1M";
+    const startDate = url.searchParams.get("startDate") || url.searchParams.get("start_date");
+    const endDate = url.searchParams.get("endDate") || url.searchParams.get("end_date");
+    const alpacaUrl = new URL(`${getBrokerBaseUrl(broker)}/v2/account/portfolio/history`);
+    alpacaUrl.searchParams.set("timeframe", timeframe);
+
+    if (startDate && endDate) {
+      alpacaUrl.searchParams.set("start", startDate);
+      alpacaUrl.searchParams.set("end", endDate);
+    } else {
+      alpacaUrl.searchParams.set("period", period);
+    }
+
+    const response = await proxyAlpacaJson(alpacaUrl.toString(), headers);
+    return response.ok
+      ? jsonResponse(response.data ?? {})
+      : jsonResponse(response.data ?? { error: "Failed to fetch portfolio history" }, response.status || 400);
+  }
+
+  return null;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -422,25 +591,19 @@ Deno.serve(async (req: Request) => {
     const brokerMatch = path.match(/\/brokers\/([^/]+)$/);
     if (brokerMatch && req.method === "DELETE") {
       const brokerId = decodeURIComponent(brokerMatch[1]);
-      await supabase
-        .from("broker_credentials")
-        .delete()
-        .eq("user_id", userId)
-        .eq("broker_account_id", brokerId);
-
-      const { error } = await supabase
-        .from("broker_accounts")
-        .delete()
-        .eq("user_id", userId)
-        .eq("id", brokerId);
+      const error = await deleteBrokerAccountIds(supabase, userId, [brokerId]);
 
       return error
-        ? jsonResponse({ error: "Failed to disconnect broker", details: error.message }, 500)
+        ? jsonResponse({ error: "Failed to disconnect broker", details: error }, 500)
         : jsonResponse({ success: true });
     }
   }
 
   if (
+    path.endsWith("/alpaca/account") ||
+    path.endsWith("/alpaca/positions") ||
+    path.endsWith("/alpaca/orders") ||
+    path.endsWith("/alpaca/portfolio-history") ||
     path.endsWith("/platform-orders/route") ||
     path.match(/\/platform-orders\/[^/]+\/reconcile$/) ||
     path.endsWith("/strategy-automation/schedules") ||
@@ -459,6 +622,11 @@ Deno.serve(async (req: Request) => {
 
     if (authError || !userId) {
       return jsonResponse({ error: authError }, 401);
+    }
+
+    const alpacaRouteResponse = await handleAlpacaReadRoute(req, url, supabase, userId);
+    if (alpacaRouteResponse) {
+      return alpacaRouteResponse;
     }
 
     if (path.endsWith("/alpaca/options/contracts") && req.method === "GET") {
