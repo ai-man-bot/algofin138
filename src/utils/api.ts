@@ -289,6 +289,51 @@ export const alpacaAPI = {
       method: 'POST',
       body: JSON.stringify({ symbols }),
     }),
+
+  getOptionContracts: (
+    underlyingSymbol: string,
+    params: Record<string, string | number | undefined> = {},
+    options: CachedRequestOptions = {},
+  ) => {
+    const search = new URLSearchParams();
+    search.set('underlying_symbols', underlyingSymbol.toUpperCase());
+
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== '') {
+        search.set(key, String(value));
+      }
+    }
+
+    return cachedApiRequest(`/alpaca/options/contracts?${search.toString()}`, {
+      method: 'GET',
+      ttlMs: 60_000,
+      ...options,
+    });
+  },
+
+  getOptionChain: (
+    underlyingSymbol: string,
+    params: Record<string, string | number | undefined> = {},
+    options: CachedRequestOptions = {},
+  ) => {
+    const search = new URLSearchParams();
+
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== '') {
+        search.set(key, String(value));
+      }
+    }
+
+    const query = search.toString();
+    return cachedApiRequest(
+      `/alpaca/options/chain/${encodeURIComponent(underlyingSymbol.toUpperCase())}${query ? `?${query}` : ''}`,
+      {
+        method: 'GET',
+        ttlMs: 15_000,
+        ...options,
+      },
+    );
+  },
 };
 
 /* =========================

@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -22,6 +22,19 @@ import {
   type OperationsPanelId,
 } from '../utils/operationsDashboard';
 import { summarizeReadiness } from '../utils/productionReadiness';
+import { alpacaAPI } from '../utils/api';
+import {
+  buildOptionOrderLegs,
+  buildSampleOptionContracts,
+  estimateOptionOrderPremium,
+  filterOptionChainRows,
+  findDefaultOptionContract,
+  getOptionExpirations,
+  normalizeOptionChainRows,
+  type OptionChainRow,
+  type OptionStrategyType,
+  type OptionType,
+} from '../utils/optionChain';
 
 const panelIcon: Record<OperationsPanelId, any> = {
   risk: Shield,
@@ -82,6 +95,13 @@ function SelectInput(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
 }
 
 export function OperationsPage() {
+  const initialOptionRows = useMemo(() => normalizeOptionChainRows(buildSampleOptionContracts('TQQQ')), []);
+  const initialOption = useMemo(() => findDefaultOptionContract({
+    rows: initialOptionRows,
+    expirationDate: getOptionExpirations(initialOptionRows)[0],
+    type: 'call',
+    underlyingPrice: 71.55,
+  }), [initialOptionRows]);
   const [activePanel, setActivePanel] = useState<OperationsPanelId>('risk');
   const [riskSettings, setRiskSettings] = useState({
     killSwitchEnabled: false,
@@ -91,14 +111,19 @@ export function OperationsPage() {
     allowedSymbols: 'AAPL, MSFT, NVDA, TSLA',
   });
   const [optionOrder, setOptionOrder] = useState({
-    underlying: 'AAPL',
-    expiration: '2026-06-19',
-    strike: '200',
-    type: 'call',
+    underlying: 'TQQQ',
     side: 'buy',
     quantity: '1',
-    limitPrice: '5.25',
-    strategyType: 'single',
+    strategyType: 'single' as OptionStrategyType,
+  });
+  const [optionRows, setOptionRows] = useState<OptionChainRow[]>(initialOptionRows);
+  const [selectedExpiration, setSelectedExpiration] = useState(getOptionExpirations(initialOptionRows)[0] || '');
+  const [selectedOptionType, setSelectedOptionType] = useState<OptionType | 'all'>('call');
+  const [selectedOptionSymbol, setSelectedOptionSymbol] = useState(initialOption?.symbol || '');
+  const [optionDataState, setOptionDataState] = useState({
+    loading: false,
+    source: 'sample option chain',
+    error: '',
   });
   const [automation, setAutomation] = useState<AutomationPreview>(buildDefaultAutomationPreview());
   const [lastAction, setLastAction] = useState('No operations action has been submitted in this session.');
@@ -107,13 +132,121 @@ export function OperationsPage() {
   const omsOrders = useMemo(() => buildSampleOmsOrders(), []);
   const readiness = useMemo(() => buildOperationsReadinessReport(), []);
   const activeDefinition = operationsPanels.find((panel) => panel.id === activePanel) || operationsPanels[0];
+  const optionExpirations = useMemo(() => getOptionExpirations(optionRows), [optionRows]);
+  const visibleOptionRows = useMemo(() => filterOptionChainRows({
+    rows: optionRows,
+    expirationDate: selectedExpiration,
+    type: selectedOptionType,
+  }), [optionRows, selectedExpiration, selectedOptionType]);
+  const selectedOption = useMemo(() => (
+    optionRows.find((row) => row.symbol === selectedOptionSymbol) ||
+    findDefaultOptionContract({
+      rows: optionRows,
+      expirationDate: selectedExpiration,
+      type: selectedOptionType === 'all' ? 'call' : selectedOptionType,
+    })
+  ), [optionRows, selectedExpiration, selectedOptionSymbol, selectedOptionType]);
+  const optionLegs = useMemo(() => (
+    selectedOption
+      ? buildOptionOrderLegs({
+          strategyType: optionOrder.strategyType,
+          selected: selectedOption,
+          rows: optionRows,
+          quantity: Number(optionOrder.quantity) || 1,
+          side: optionOrder.side as 'buy' | 'sell',
+        })
+      : []
+  ), [optionOrder.quantity, optionOrder.side, optionOrder.strategyType, optionRows, selectedOption]);
+  const estimatedPremium = useMemo(() => estimateOptionOrderPremium(optionLegs), [optionLegs]);
+
+  useEffect(() => {
+    if (activePanel !== 'options') return;
+
+    const symbol = optionOrder.underlying.trim().toUpperCase();
+    if (!symbol) return;
+
+    const timeout = window.setTimeout(() => {
+      loadOptionData(symbol);
+    }, 450);
+
+    return () => window.clearTimeout(timeout);
+  }, [activePanel, optionOrder.underlying]);
+
+  useEffect(() => {
+    const nextDefault = findDefaultOptionContract({
+      rows: optionRows,
+      expirationDate: selectedExpiration,
+      type: selectedOptionType === 'all' ? 'call' : selectedOptionType,
+    });
+
+    if (nextDefault && !visibleOptionRows.some((row) => row.symbol === selectedOptionSymbol)) {
+      setSelectedOptionSymbol(nextDefault.symbol);
+    }
+  }, [optionRows, selectedExpiration, selectedOptionSymbol, selectedOptionType, visibleOptionRows]);
 
   const saveRiskSettings = () => {
     setLastAction(`Risk settings staged: kill switch ${riskSettings.killSwitchEnabled ? 'enabled' : 'disabled'}, max position $${riskSettings.maxPositionSize}.`);
   };
 
   const stageOptionOrder = () => {
-    setLastAction(`Options order staged: ${optionOrder.side.toUpperCase()} ${optionOrder.quantity} ${optionOrder.underlying} ${optionOrder.expiration} ${optionOrder.strike}${optionOrder.type === 'call' ? 'C' : 'P'} @ ${optionOrder.limitPrice}.`);
+    const symbols = optionLegs.map((leg) => `${leg.side.toUpperCase()} ${leg.symbol}`).join(', ');
+    setLastAction(`Options order staged: ${optionOrder.strategyType}: ${symbols}. Net premium ${estimatedPremium >= 0 ? 'debit' : 'credit'} $${Math.abs(estimatedPremium).toFixed(2)}.`);
+  };
+
+  const loadOptionData = async (symbol: string) => {
+    try {
+      setOptionDataState((current) => ({ ...current, loading: true, error: '' }));
+
+      const today = new Date().toISOString().slice(0, 10);
+      const [contractsResponse, chainResponse] = await Promise.all([
+        alpacaAPI.getOptionContracts(symbol, {
+          status: 'active',
+          expiration_date_gte: today,
+          limit: 1000,
+        }, { forceRefresh: true }).catch((error) => ({ error })),
+        alpacaAPI.getOptionChain(symbol, {
+          feed: 'indicative',
+          limit: 1000,
+        }, { forceRefresh: true }).catch(() => ({})),
+      ]);
+
+      const contracts = Array.isArray((contractsResponse as any)?.option_contracts)
+        ? (contractsResponse as any).option_contracts
+        : [];
+      const snapshots = (chainResponse as any)?.snapshots || (chainResponse as any) || {};
+      const rows = contracts.length > 0
+        ? normalizeOptionChainRows(contracts, snapshots)
+        : normalizeOptionChainRows(buildSampleOptionContracts(symbol));
+
+      const expirations = getOptionExpirations(rows);
+      const nextExpiration = expirations.includes(selectedExpiration)
+        ? selectedExpiration
+        : expirations[0] || '';
+      const nextDefault = findDefaultOptionContract({
+        rows,
+        expirationDate: nextExpiration,
+        type: selectedOptionType === 'all' ? 'call' : selectedOptionType,
+      });
+
+      setOptionRows(rows);
+      setSelectedExpiration(nextExpiration);
+      setSelectedOptionSymbol(nextDefault?.symbol || rows[0]?.symbol || '');
+      setOptionDataState({
+        loading: false,
+        source: contracts.length > 0 ? 'Alpaca contracts + option snapshots' : 'sample option chain',
+        error: contracts.length > 0 ? '' : 'Alpaca contracts unavailable; showing sample structure.',
+      });
+    } catch (error: any) {
+      const rows = normalizeOptionChainRows(buildSampleOptionContracts(symbol));
+      setOptionRows(rows);
+      setSelectedExpiration(getOptionExpirations(rows)[0] || '');
+      setSelectedOptionSymbol(rows[0]?.symbol || '');
+      setOptionDataState({
+        loading: false,
+        source: 'sample option chain',
+        error: error?.message || 'Alpaca options data unavailable.',
+      });
+    }
   };
 
   const saveAutomation = () => {
@@ -272,7 +405,7 @@ export function OperationsPage() {
         )}
 
         {activePanel === 'options' && (
-          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[420px_1fr]">
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[460px_1fr]">
             <div className="rounded-lg border border-slate-700/50 bg-slate-950/30 p-5">
               <div className="mb-4 flex items-center gap-2">
                 <Target className="h-5 w-5 text-blue-400" />
@@ -280,28 +413,127 @@ export function OperationsPage() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <Field label="Underlying"><TextInput value={optionOrder.underlying} onChange={(event) => setOptionOrder((current) => ({ ...current, underlying: event.target.value.toUpperCase() }))} /></Field>
-                <Field label="Expiration"><TextInput type="date" value={optionOrder.expiration} onChange={(event) => setOptionOrder((current) => ({ ...current, expiration: event.target.value }))} /></Field>
-                <Field label="Strike"><TextInput value={optionOrder.strike} onChange={(event) => setOptionOrder((current) => ({ ...current, strike: event.target.value }))} /></Field>
-                <Field label="Type"><SelectInput value={optionOrder.type} onChange={(event) => setOptionOrder((current) => ({ ...current, type: event.target.value }))}><option value="call">Call</option><option value="put">Put</option></SelectInput></Field>
+                <Field label="Expiration">
+                  <SelectInput value={selectedExpiration} onChange={(event) => setSelectedExpiration(event.target.value)}>
+                    {optionExpirations.map((expiration) => (
+                      <option key={expiration} value={expiration}>{expiration}</option>
+                    ))}
+                  </SelectInput>
+                </Field>
+                <Field label="Chain side">
+                  <SelectInput value={selectedOptionType} onChange={(event) => setSelectedOptionType(event.target.value as OptionType | 'all')}>
+                    <option value="call">Calls</option>
+                    <option value="put">Puts</option>
+                    <option value="all">Calls and puts</option>
+                  </SelectInput>
+                </Field>
+                <Field label="Strategy"><SelectInput value={optionOrder.strategyType} onChange={(event) => setOptionOrder((current) => ({ ...current, strategyType: event.target.value as OptionStrategyType }))}><option value="single">Single leg</option><option value="vertical">Vertical spread</option><option value="straddle">Long straddle</option></SelectInput></Field>
                 <Field label="Side"><SelectInput value={optionOrder.side} onChange={(event) => setOptionOrder((current) => ({ ...current, side: event.target.value }))}><option value="buy">Buy</option><option value="sell">Sell</option></SelectInput></Field>
                 <Field label="Quantity"><TextInput value={optionOrder.quantity} onChange={(event) => setOptionOrder((current) => ({ ...current, quantity: event.target.value }))} /></Field>
-                <Field label="Limit price"><TextInput value={optionOrder.limitPrice} onChange={(event) => setOptionOrder((current) => ({ ...current, limitPrice: event.target.value }))} /></Field>
-                <Field label="Strategy"><SelectInput value={optionOrder.strategyType} onChange={(event) => setOptionOrder((current) => ({ ...current, strategyType: event.target.value }))}><option value="single">Single leg</option><option value="vertical">Vertical spread</option></SelectInput></Field>
+              </div>
+              <div className="mt-4 rounded-lg border border-slate-700/50 bg-slate-800/30 p-3 text-xs text-slate-400">
+                <div className="mb-1 flex items-center justify-between gap-3">
+                  <span>Data source</span>
+                  <span className="text-slate-300">{optionDataState.loading ? 'Loading...' : optionDataState.source}</span>
+                </div>
+                {optionDataState.error && <p className="text-yellow-300">{optionDataState.error}</p>}
               </div>
               <button onClick={stageOptionOrder} className="mt-5 w-full rounded-lg bg-blue-500 py-3 text-sm text-white transition-colors hover:bg-blue-600">
                 Stage Options Order
               </button>
             </div>
-            <div className="rounded-lg border border-slate-700/50 bg-slate-950/30 p-5">
-              <h4 className="mb-4 text-slate-100">Review Ticket</h4>
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <ReviewItem label="Contract" value={`${optionOrder.underlying} ${optionOrder.expiration} ${optionOrder.strike}${optionOrder.type === 'call' ? 'C' : 'P'}`} />
-                <ReviewItem label="Instruction" value={`${optionOrder.side.toUpperCase()} ${optionOrder.quantity} @ ${optionOrder.limitPrice}`} />
-                <ReviewItem label="Strategy type" value={optionOrder.strategyType === 'vertical' ? 'Vertical spread' : 'Single leg'} />
-                <ReviewItem label="Estimated premium" value={`$${(Number(optionOrder.quantity || 0) * Number(optionOrder.limitPrice || 0) * 100).toFixed(2)}`} />
+
+            <div className="space-y-6">
+              <div className="rounded-lg border border-slate-700/50 bg-slate-950/30 p-5">
+                <div className="mb-4 flex items-center justify-between">
+                  <h4 className="text-slate-100">Alpaca Option Chain</h4>
+                  <button
+                    onClick={() => loadOptionData(optionOrder.underlying.trim().toUpperCase())}
+                    className="flex items-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-xs text-slate-300 transition-colors hover:bg-slate-700"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                    Reload chain
+                  </button>
+                </div>
+                <div className="max-h-[360px] overflow-auto rounded-lg border border-slate-700/50">
+                  <table className="w-full min-w-[980px]">
+                    <thead className="sticky top-0 bg-slate-950 text-left text-xs text-slate-500">
+                      <tr>
+                        <th className="p-3">Strike</th>
+                        <th className="p-3">Type</th>
+                        <th className="p-3">Symbol</th>
+                        <th className="p-3">Bid</th>
+                        <th className="p-3">Ask</th>
+                        <th className="p-3">Last</th>
+                        <th className="p-3">IV</th>
+                        <th className="p-3">Delta</th>
+                        <th className="p-3">Volume</th>
+                        <th className="p-3">Open Interest</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleOptionRows.map((row) => (
+                        <tr
+                          key={row.symbol}
+                          onClick={() => setSelectedOptionSymbol(row.symbol)}
+                          className={`cursor-pointer border-t border-slate-700/40 text-sm transition-colors hover:bg-slate-800/50 ${
+                            selectedOption?.symbol === row.symbol ? 'bg-blue-500/10' : ''
+                          }`}
+                        >
+                          <td className="p-3 font-mono text-slate-100">{row.strikePrice.toFixed(2)}</td>
+                          <td className="p-3 capitalize text-slate-300">{row.type}</td>
+                          <td className="p-3 font-mono text-blue-400">{row.symbol}</td>
+                          <td className="p-3 font-mono text-rose-300">{formatOptionNumber(row.bid)}</td>
+                          <td className="p-3 font-mono text-emerald-300">{formatOptionNumber(row.ask)}</td>
+                          <td className="p-3 font-mono text-slate-300">{formatOptionNumber(row.last)}</td>
+                          <td className="p-3 font-mono text-slate-300">{row.impliedVolatility == null ? '-' : `${(row.impliedVolatility * 100).toFixed(1)}%`}</td>
+                          <td className="p-3 font-mono text-slate-300">{formatOptionNumber(row.delta, 2)}</td>
+                          <td className="p-3 font-mono text-slate-300">{row.volume ?? '-'}</td>
+                          <td className="p-3 font-mono text-slate-300">{row.openInterest ?? '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-              <div className="mt-5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-300">
-                Broker capability checks run before submission. Alpaca options are enabled in the shared risk gate; account approval level still needs to be checked before live submission.
+
+              <div className="rounded-lg border border-slate-700/50 bg-slate-950/30 p-5">
+                <h4 className="mb-4 text-slate-100">Review Ticket</h4>
+                <div className="mb-5 grid grid-cols-1 gap-4 md:grid-cols-4">
+                  <ReviewItem label="Strategy type" value={optionOrder.strategyType === 'vertical' ? 'Vertical spread' : optionOrder.strategyType === 'straddle' ? 'Long straddle' : 'Single leg'} />
+                  <ReviewItem label="Legs" value={String(optionLegs.length)} />
+                  <ReviewItem label="Net premium" value={`${estimatedPremium >= 0 ? 'Debit' : 'Credit'} $${Math.abs(estimatedPremium).toFixed(2)}`} />
+                  <ReviewItem label="Expiration" value={selectedExpiration || '-'} />
+                </div>
+                <div className="overflow-hidden rounded-lg border border-slate-700/50">
+                  <table className="w-full">
+                    <thead className="bg-slate-950/50 text-left text-xs text-slate-500">
+                      <tr>
+                        <th className="p-3">Leg</th>
+                        <th className="p-3">Action</th>
+                        <th className="p-3">Contract</th>
+                        <th className="p-3">Strike</th>
+                        <th className="p-3">Mark</th>
+                        <th className="p-3">Intent</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {optionLegs.map((leg, index) => (
+                        <tr key={leg.id} className="border-t border-slate-700/40 text-sm">
+                          <td className="p-3 text-slate-400">{index + 1}</td>
+                          <td className={leg.side === 'buy' ? 'p-3 text-emerald-400' : 'p-3 text-rose-400'}>{leg.side.toUpperCase()} {leg.ratioQuantity}</td>
+                          <td className="p-3 font-mono text-blue-400">{leg.symbol}</td>
+                          <td className="p-3 font-mono text-slate-300">{leg.strikePrice.toFixed(2)} {leg.type.toUpperCase()}</td>
+                          <td className="p-3 font-mono text-slate-300">{formatOptionNumber(leg.limitPrice)}</td>
+                          <td className="p-3 text-slate-300">{leg.positionIntent.replace(/_/g, ' ')}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="mt-5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-300">
+                  Multi-leg tickets are built from same-expiration Alpaca contracts. Account approval level and Alpaca order-class validation still run before live submission.
+                </div>
               </div>
             </div>
           </div>
@@ -428,4 +660,8 @@ function ReadinessRow({ icon: Icon, status, text }: { icon: any; status: string;
       <StatusPill status={status} />
     </div>
   );
+}
+
+function formatOptionNumber(value: number | null | undefined, digits = 2) {
+  return value == null || !Number.isFinite(value) ? '-' : value.toFixed(digits);
 }

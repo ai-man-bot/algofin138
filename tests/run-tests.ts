@@ -4,6 +4,7 @@ import './brokerModels.test.ts';
 import './sprint3OrderLifecycle.test.ts';
 import './remainingSprints.test.ts';
 import './operationsDashboard.test.ts';
+import './optionChain.test.ts';
 import assert from 'node:assert/strict';
 import {
   calculateBacktestMetrics,

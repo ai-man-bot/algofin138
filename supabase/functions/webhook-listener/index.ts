@@ -53,6 +53,91 @@ async function getAuthenticatedUserId(req: Request, supabase: any) {
   return { userId: data.user.id, error: null };
 }
 
+async function getAlpacaHeaders(supabase: any, userId: string) {
+  const envKey = Deno.env.get("ALPACA_API_KEY") ?? Deno.env.get("APCA_API_KEY_ID");
+  const envSecret = Deno.env.get("ALPACA_API_SECRET") ?? Deno.env.get("APCA_API_SECRET_KEY");
+
+  if (envKey && envSecret) {
+    return {
+      headers: {
+        "APCA-API-KEY-ID": envKey,
+        "APCA-API-SECRET-KEY": envSecret,
+      },
+      error: null,
+    };
+  }
+
+  const { data: credentialRows } = await supabase
+    .from("broker_credentials")
+    .select("api_key, api_secret, broker_account_id")
+    .eq("user_id", userId)
+    .limit(5);
+
+  const credential = Array.isArray(credentialRows)
+    ? credentialRows.find((row: any) => row.api_key && row.api_secret)
+    : null;
+
+  if (credential) {
+    return {
+      headers: {
+        "APCA-API-KEY-ID": credential.api_key,
+        "APCA-API-SECRET-KEY": credential.api_secret,
+      },
+      error: null,
+    };
+  }
+
+  const { data: kvRows } = await supabase
+    .from("kv_store_f118884a")
+    .select("value")
+    .like("key", `user:${userId}:broker:%`);
+
+  const broker = Array.isArray(kvRows)
+    ? kvRows
+        .map((row: any) => row.value)
+        .find((value: any) =>
+          value?.connected &&
+          value?.apiKey &&
+          value?.apiSecret &&
+          String(value?.brokerType || value?.id || "").toLowerCase().includes("alpaca")
+        )
+    : null;
+
+  if (broker) {
+    return {
+      headers: {
+        "APCA-API-KEY-ID": broker.apiKey,
+        "APCA-API-SECRET-KEY": broker.apiSecret,
+      },
+      error: null,
+    };
+  }
+
+  return {
+    headers: null,
+    error: "No Alpaca credentials found. Connect an Alpaca broker account first.",
+  };
+}
+
+async function proxyAlpacaJson(url: string, headers: Record<string, string>) {
+  const response = await fetch(url, { headers });
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    return {
+      ok: false,
+      status: response.status,
+      data: data ?? { error: "Alpaca request failed" },
+    };
+  }
+
+  return {
+    ok: true,
+    status: response.status,
+    data,
+  };
+}
+
 async function readJson(req: Request) {
   return req.json().catch(() => ({}));
 }
@@ -70,7 +155,9 @@ Deno.serve(async (req: Request) => {
     path.match(/\/platform-orders\/[^/]+\/reconcile$/) ||
     path.endsWith("/strategy-automation/schedules") ||
     path.match(/\/strategy-automation\/schedules\/[^/]+$/) ||
-    path.endsWith("/strategy-automation/run")
+    path.endsWith("/strategy-automation/run") ||
+    path.endsWith("/alpaca/options/contracts") ||
+    path.match(/\/alpaca\/options\/chain\/[^/]+$/)
   ) {
     const { supabase, error: clientError } = await getSupabaseClient();
 
@@ -82,6 +169,47 @@ Deno.serve(async (req: Request) => {
 
     if (authError || !userId) {
       return jsonResponse({ error: authError }, 401);
+    }
+
+    if (path.endsWith("/alpaca/options/contracts") && req.method === "GET") {
+      const { headers, error: credentialsError } = await getAlpacaHeaders(supabase, userId);
+
+      if (credentialsError || !headers) {
+        return jsonResponse({ error: credentialsError }, 404);
+      }
+
+      const params = new URLSearchParams(url.search);
+      if (!params.get("underlying_symbols")) {
+        return jsonResponse({ error: "Missing underlying_symbols" }, 400);
+      }
+
+      const alpaca = await proxyAlpacaJson(
+        `https://paper-api.alpaca.markets/v2/options/contracts?${params.toString()}`,
+        headers,
+      );
+
+      return jsonResponse(alpaca.data, alpaca.ok ? 200 : alpaca.status);
+    }
+
+    const optionChainMatch = path.match(/\/alpaca\/options\/chain\/([^/]+)$/);
+    if (optionChainMatch && req.method === "GET") {
+      const { headers, error: credentialsError } = await getAlpacaHeaders(supabase, userId);
+
+      if (credentialsError || !headers) {
+        return jsonResponse({ error: credentialsError }, 404);
+      }
+
+      const underlyingSymbol = optionChainMatch[1].toUpperCase();
+      const params = new URLSearchParams(url.search);
+      if (!params.get("feed")) params.set("feed", "indicative");
+      if (!params.get("limit")) params.set("limit", "1000");
+
+      const alpaca = await proxyAlpacaJson(
+        `https://data.alpaca.markets/v1beta1/options/snapshots/${underlyingSymbol}?${params.toString()}`,
+        headers,
+      );
+
+      return jsonResponse(alpaca.data, alpaca.ok ? 200 : alpaca.status);
     }
 
     if (path.endsWith("/platform-orders/route") && req.method === "POST") {
