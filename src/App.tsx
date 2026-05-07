@@ -10,8 +10,8 @@ import './utils/seedData'; // Import seed data utilities
 import './utils/pwaCheck'; // Import PWA health check (exposes checkPWAHealth() in console)
 import './utils/debugUtils'; // Import debug utilities (exposes debugAlgoFin in console)
 
-type Screen = 'login' | 'reset-password' | 'dashboard' | 'trades' | 'brokers' | 'strategy' | 'webhooks' | 'notifications' | 'account' | 'webhook-debug' | 'analytics' | 'performance';
-const authenticatedScreens: Screen[] = ['dashboard', 'strategy', 'trades', 'analytics', 'performance', 'webhooks', 'brokers', 'notifications', 'account', 'webhook-debug'];
+type Screen = 'login' | 'reset-password' | 'dashboard' | 'trades' | 'brokers' | 'strategy' | 'webhooks' | 'notifications' | 'account' | 'webhook-debug' | 'analytics' | 'performance' | 'operations';
+const authenticatedScreens: Screen[] = ['dashboard', 'strategy', 'trades', 'analytics', 'performance', 'operations', 'webhooks', 'brokers', 'notifications', 'account', 'webhook-debug'];
 
 const Dashboard = lazy(() => import('./components/Dashboard').then((module) => ({ default: module.Dashboard })));
 const TradesTab = lazy(() => import('./components/TradesTab').then((module) => ({ default: module.TradesTab })));
@@ -23,6 +23,7 @@ const AccountPage = lazy(() => import('./components/AccountPage').then((module) 
 const WebhookDebugPage = lazy(() => import('./components/WebhookDebugPage').then((module) => ({ default: module.WebhookDebugPage })));
 const AnalyticsPage = lazy(() => import('./components/AnalyticsPage').then((module) => ({ default: module.AnalyticsPage })));
 const PerformanceAnalyticsPage = lazy(() => import('./components/PerformanceAnalyticsPage').then((module) => ({ default: module.PerformanceAnalyticsPage })));
+const OperationsPage = lazy(() => import('./components/OperationsPage').then((module) => ({ default: module.OperationsPage })));
 
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<Screen>('login');
@@ -280,6 +281,8 @@ export default function App() {
         return <AnalyticsPage />;
       case 'performance':
         return <PerformanceAnalyticsPage />;
+      case 'operations':
+        return <OperationsPage />;
       case 'webhooks':
         return <WebhooksPage />;
       case 'brokers':
@@ -355,6 +358,16 @@ export default function App() {
                   }`}
                 >
                   Performance
+                </button>
+                <button
+                  onClick={() => setCurrentScreen('operations')}
+                  className={`rounded-md px-4 py-2 transition-colors ${
+                    currentScreen === 'operations'
+                      ? 'bg-blue-500 text-white'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Operations
                 </button>
                 <button
                   onClick={() => setCurrentScreen('webhooks')}
