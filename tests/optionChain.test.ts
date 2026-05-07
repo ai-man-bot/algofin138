@@ -3,6 +3,8 @@ import {
   buildOptionOrderLegs,
   buildSampleOptionContracts,
   estimateOptionOrderPremium,
+  extractAlpacaOptionContracts,
+  extractAlpacaOptionSnapshots,
   filterOptionChainRows,
   findDefaultOptionContract,
   getOptionExpirations,
@@ -60,5 +62,38 @@ assert.equal(straddle.length, 2);
 assert.notEqual(straddle[0].type, straddle[1].type);
 assert.equal(straddle[0].ratioQuantity, 2);
 assert.equal(typeof estimateOptionOrderPremium(straddle), 'number');
+
+const extractedRows = normalizeOptionChainRows(
+  extractAlpacaOptionContracts({
+    contracts: [
+      {
+        symbol: 'NVDA260717C00100000',
+        underlyingSymbol: 'NVDA',
+        expirationDate: '2026-07-17',
+        type: 'CALL',
+        strikePrice: '100',
+        openInterest: '12',
+        closePrice: '4.20',
+        tradable: true,
+      },
+    ],
+  }),
+  extractAlpacaOptionSnapshots({
+    data: {
+      snapshots: {
+        NVDA260717C00100000: {
+          latestQuote: { bp: 4.1, ap: 4.3 },
+          greeks: { delta: 0.52, iv: 0.38 },
+        },
+      },
+    },
+  }),
+);
+
+assert.equal(extractedRows.length, 1);
+assert.equal(extractedRows[0].underlyingSymbol, 'NVDA');
+assert.equal(extractedRows[0].type, 'call');
+assert.equal(extractedRows[0].strikePrice, 100);
+assert.equal(extractedRows[0].mark, 4.199999999999999);
 
 console.log('option chain tests passed');

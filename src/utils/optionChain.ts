@@ -8,15 +8,20 @@ export interface AlpacaOptionContract {
   name?: string;
   status?: string;
   tradable?: boolean;
-  expiration_date: string;
+  expiration_date?: string;
+  expirationDate?: string;
   root_symbol?: string;
-  underlying_symbol: string;
-  type: OptionType;
+  underlying_symbol?: string;
+  underlyingSymbol?: string;
+  type: OptionType | string;
   style?: string;
-  strike_price: string | number;
+  strike_price?: string | number;
+  strikePrice?: string | number;
   size?: string | number;
   open_interest?: string | number | null;
+  openInterest?: string | number | null;
   close_price?: string | number | null;
+  closePrice?: string | number | null;
 }
 
 export interface OptionSnapshot {
@@ -105,25 +110,58 @@ function resolveMark(bid: number | null, ask: number | null, last: number | null
   return last;
 }
 
+export function extractAlpacaOptionContracts(response: unknown): AlpacaOptionContract[] {
+  if (Array.isArray(response)) return response as AlpacaOptionContract[];
+
+  const payload = response as any;
+  if (Array.isArray(payload?.option_contracts)) return payload.option_contracts;
+  if (Array.isArray(payload?.contracts)) return payload.contracts;
+  if (Array.isArray(payload?.data?.option_contracts)) return payload.data.option_contracts;
+  if (Array.isArray(payload?.data?.contracts)) return payload.data.contracts;
+  if (Array.isArray(payload?.data)) return payload.data;
+
+  return [];
+}
+
+export function extractAlpacaOptionSnapshots(response: unknown): Record<string, OptionSnapshot> {
+  const payload = response as any;
+
+  if (payload?.snapshots && typeof payload.snapshots === 'object') return payload.snapshots;
+  if (payload?.data?.snapshots && typeof payload.data.snapshots === 'object') return payload.data.snapshots;
+
+  if (payload && typeof payload === 'object' && !Array.isArray(payload) && !payload.error) {
+    return payload as Record<string, OptionSnapshot>;
+  }
+
+  return {};
+}
+
 export function normalizeOptionChainRows(
   contracts: AlpacaOptionContract[],
   snapshots: Record<string, OptionSnapshot> = {},
 ): OptionChainRow[] {
   return contracts
-    .filter((contract) => contract.symbol && contract.expiration_date && contract.strike_price != null)
+    .filter((contract) => {
+      const expirationDate = contract.expiration_date ?? contract.expirationDate;
+      const strikePrice = contract.strike_price ?? contract.strikePrice;
+      return contract.symbol && expirationDate && strikePrice != null;
+    })
     .map((contract) => {
       const symbol = contract.symbol.toUpperCase();
+      const expirationDate = String(contract.expiration_date ?? contract.expirationDate);
+      const strikePrice = contract.strike_price ?? contract.strikePrice;
       const snapshot = resolveSnapshot(snapshots, symbol);
       const bid = resolveBid(snapshot);
       const ask = resolveAsk(snapshot);
-      const last = resolveLast(snapshot) ?? toNumber(contract.close_price);
+      const last = resolveLast(snapshot) ?? toNumber(contract.close_price ?? contract.closePrice);
+      const type = String(contract.type || '').toLowerCase() === 'put' ? 'put' : 'call';
 
       return {
         symbol,
-        underlyingSymbol: String(contract.underlying_symbol || contract.root_symbol || '').toUpperCase(),
-        expirationDate: contract.expiration_date,
-        type: contract.type,
-        strikePrice: toNumber(contract.strike_price) ?? 0,
+        underlyingSymbol: String(contract.underlying_symbol || contract.underlyingSymbol || contract.root_symbol || '').toUpperCase(),
+        expirationDate,
+        type,
+        strikePrice: toNumber(strikePrice) ?? 0,
         bid,
         ask,
         last,
@@ -131,7 +169,7 @@ export function normalizeOptionChainRows(
         impliedVolatility: toNumber(snapshot.greeks?.implied_volatility ?? snapshot.greeks?.iv ?? snapshot.impliedVolatility),
         delta: toNumber(snapshot.greeks?.delta),
         volume: toNumber(snapshot.volume ?? snapshot.latestTrade?.s ?? snapshot.latestTrade?.size),
-        openInterest: toNumber(snapshot.openInterest ?? contract.open_interest),
+        openInterest: toNumber(snapshot.openInterest ?? contract.open_interest ?? contract.openInterest),
         tradable: contract.tradable !== false && contract.status !== 'inactive',
       };
     })

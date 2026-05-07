@@ -27,6 +27,8 @@ import {
   buildOptionOrderLegs,
   buildSampleOptionContracts,
   estimateOptionOrderPremium,
+  extractAlpacaOptionContracts,
+  extractAlpacaOptionSnapshots,
   filterOptionChainRows,
   findDefaultOptionContract,
   getOptionExpirations,
@@ -58,6 +60,18 @@ const statusClass: Record<string, string> = {
   rejected: 'bg-rose-500/10 text-rose-400',
   fail: 'bg-rose-500/10 text-rose-400',
 };
+
+function resolveApiErrorMessage(response: unknown) {
+  const payload = response as any;
+  const error = payload?.error;
+
+  if (!error) return '';
+  if (typeof error === 'string') return error;
+  if (typeof error?.message === 'string') return error.message;
+  if (typeof error?.error === 'string') return error.error;
+
+  return 'Alpaca options request failed.';
+}
 
 function StatusPill({ status }: { status: string }) {
   return (
@@ -210,13 +224,13 @@ export function OperationsPage() {
         }, { forceRefresh: true }).catch(() => ({})),
       ]);
 
-      const contracts = Array.isArray((contractsResponse as any)?.option_contracts)
-        ? (contractsResponse as any).option_contracts
-        : [];
-      const snapshots = (chainResponse as any)?.snapshots || (chainResponse as any) || {};
+      const contracts = extractAlpacaOptionContracts(contractsResponse);
+      const snapshots = extractAlpacaOptionSnapshots(chainResponse);
       const rows = contracts.length > 0
         ? normalizeOptionChainRows(contracts, snapshots)
         : normalizeOptionChainRows(buildSampleOptionContracts(symbol));
+      const hasSnapshots = Object.keys(snapshots).length > 0;
+      const requestError = resolveApiErrorMessage(contractsResponse);
 
       const expirations = getOptionExpirations(rows);
       const nextExpiration = expirations.includes(selectedExpiration)
@@ -233,8 +247,12 @@ export function OperationsPage() {
       setSelectedOptionSymbol(nextDefault?.symbol || rows[0]?.symbol || '');
       setOptionDataState({
         loading: false,
-        source: contracts.length > 0 ? 'Alpaca contracts + option snapshots' : 'sample option chain',
-        error: contracts.length > 0 ? '' : 'Alpaca contracts unavailable; showing sample structure.',
+        source: contracts.length > 0
+          ? (hasSnapshots ? 'Alpaca contracts + option snapshots' : 'Alpaca contracts')
+          : 'sample option chain',
+        error: contracts.length > 0
+          ? (hasSnapshots ? '' : 'Snapshot quotes unavailable; showing Alpaca contract metadata only.')
+          : (requestError || `No active Alpaca option contracts returned for ${symbol}. Check the connected Alpaca account, options entitlement, and symbol availability.`),
       });
     } catch (error: any) {
       const rows = normalizeOptionChainRows(buildSampleOptionContracts(symbol));
