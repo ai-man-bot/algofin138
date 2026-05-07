@@ -7,6 +7,7 @@ import './operationsDashboard.test.ts';
 import './optionChain.test.ts';
 import './strategyLab.test.ts';
 import './strategyLabRouting.test.ts';
+import './webhookRouteMatching.test.ts';
 import assert from 'node:assert/strict';
 import {
   calculateBacktestMetrics,

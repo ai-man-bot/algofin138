@@ -8,6 +8,10 @@ import {
   buildStrategyLabSignalFromPayload,
   buildWebhookEventStatusUpdate,
 } from "../../../src/utils/orderRoutingPersistence.ts";
+import {
+  isRootWebhookIngressPath,
+  normalizeBrokerConnectPayload,
+} from "../../../src/utils/webhookRouteMatching.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -237,6 +241,136 @@ async function fetchAlpacaBrokerSnapshot(supabase: any, userId: string, brokerAc
   };
 }
 
+async function listBrokerAccounts(supabase: any, userId: string) {
+  const { data, error } = await supabase
+    .from("broker_accounts")
+    .select("*")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    return { brokers: null, error: error.message };
+  }
+
+  return { brokers: data ?? [], error: null };
+}
+
+async function upsertBrokerConnection(supabase: any, userId: string, payload: any) {
+  const { brokerType, name, apiKey, apiSecret, paper } = normalizeBrokerConnectPayload(payload);
+
+  if (brokerType === "alpaca") {
+    const baseUrl = paper
+      ? "https://paper-api.alpaca.markets"
+      : "https://api.alpaca.markets";
+
+    const accountResponse = await fetch(`${baseUrl}/v2/account`, {
+      headers: {
+        "APCA-API-KEY-ID": apiKey,
+        "APCA-API-SECRET-KEY": apiSecret,
+      },
+    });
+
+    if (!accountResponse.ok) {
+      const errorData = await accountResponse.json().catch(() => ({}));
+      return {
+        broker: null,
+        error:
+          errorData?.message ||
+          errorData?.error ||
+          "Invalid Alpaca credentials",
+        status: 400,
+      };
+    }
+
+    const accountData = await accountResponse.json();
+    const brokerAccountId = `${brokerType}:${accountData.account_number}`;
+    const metadata = {
+      account: accountData,
+    };
+
+    const { data: brokerRow, error: brokerError } = await supabase
+      .from("broker_accounts")
+      .upsert({
+        id: brokerAccountId,
+        user_id: userId,
+        broker_type: brokerType,
+        name,
+        account_id: accountData.account_number,
+        connected: true,
+        paper,
+        base_url: baseUrl,
+        metadata,
+        updated_at: new Date().toISOString(),
+      })
+      .select("*")
+      .single();
+
+    if (brokerError) {
+      return { broker: null, error: brokerError.message, status: 500 };
+    }
+
+    await supabase
+      .from("broker_credentials")
+      .delete()
+      .eq("user_id", userId)
+      .eq("broker_account_id", brokerAccountId);
+
+    const { error: credentialError } = await supabase
+      .from("broker_credentials")
+      .insert({
+        broker_account_id: brokerAccountId,
+        user_id: userId,
+        api_key: apiKey,
+        api_secret: apiSecret,
+        updated_at: new Date().toISOString(),
+      });
+
+    if (credentialError) {
+      return { broker: null, error: credentialError.message, status: 500 };
+    }
+
+    return { broker: brokerRow, error: null, status: 200 };
+  }
+
+  const brokerAccountId = `${brokerType}:${Date.now()}`;
+  const { data: brokerRow, error: brokerError } = await supabase
+    .from("broker_accounts")
+    .insert({
+      id: brokerAccountId,
+      user_id: userId,
+      broker_type: brokerType,
+      name,
+      account_id: brokerAccountId,
+      connected: true,
+      paper,
+      base_url: null,
+      metadata: { placeholder: true },
+      updated_at: new Date().toISOString(),
+    })
+    .select("*")
+    .single();
+
+  if (brokerError) {
+    return { broker: null, error: brokerError.message, status: 500 };
+  }
+
+  const { error: credentialError } = await supabase
+    .from("broker_credentials")
+    .insert({
+      broker_account_id: brokerAccountId,
+      user_id: userId,
+      api_key: apiKey,
+      api_secret: apiSecret,
+      updated_at: new Date().toISOString(),
+    });
+
+  if (credentialError) {
+    return { broker: null, error: credentialError.message, status: 500 };
+  }
+
+  return { broker: brokerRow, error: null, status: 200 };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -248,6 +382,62 @@ Deno.serve(async (req: Request) => {
   const strategyLabResponse = await handleStrategyLabRoutes(req, path, jsonResponse);
   if (strategyLabResponse) {
     return strategyLabResponse;
+  }
+
+  if (
+    path.endsWith("/brokers") ||
+    path.match(/\/brokers\/[^/]+$/)
+  ) {
+    const { supabase, error: clientError } = await getSupabaseClient();
+
+    if (clientError || !supabase) {
+      return jsonResponse({ error: clientError }, 500);
+    }
+
+    const { userId, error: authError } = await getAuthenticatedUserId(req, supabase);
+
+    if (authError || !userId) {
+      return jsonResponse({ error: authError }, 401);
+    }
+
+    if (path.endsWith("/brokers") && req.method === "GET") {
+      const { brokers, error } = await listBrokerAccounts(supabase, userId);
+      return error
+        ? jsonResponse({ error: "Failed to fetch brokers", details: error }, 500)
+        : jsonResponse(brokers);
+    }
+
+    if (path.endsWith("/brokers") && req.method === "POST") {
+      const body = await readJson(req);
+      try {
+        const { broker, error, status } = await upsertBrokerConnection(supabase, userId, body);
+        return error
+          ? jsonResponse({ error }, status || 400)
+          : jsonResponse({ success: true, broker });
+      } catch (error: any) {
+        return jsonResponse({ error: error?.message || "Failed to connect broker" }, 400);
+      }
+    }
+
+    const brokerMatch = path.match(/\/brokers\/([^/]+)$/);
+    if (brokerMatch && req.method === "DELETE") {
+      const brokerId = decodeURIComponent(brokerMatch[1]);
+      await supabase
+        .from("broker_credentials")
+        .delete()
+        .eq("user_id", userId)
+        .eq("broker_account_id", brokerId);
+
+      const { error } = await supabase
+        .from("broker_accounts")
+        .delete()
+        .eq("user_id", userId)
+        .eq("id", brokerId);
+
+      return error
+        ? jsonResponse({ error: "Failed to disconnect broker", details: error.message }, 500)
+        : jsonResponse({ success: true });
+    }
   }
 
   if (
@@ -465,6 +655,10 @@ Deno.serve(async (req: Request) => {
 
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405);
+  }
+
+  if (!isRootWebhookIngressPath(path)) {
+    return jsonResponse({ error: "Route not found" }, 404);
   }
 
   const tokenFromUrl = url.searchParams.get("token");
