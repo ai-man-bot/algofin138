@@ -2,14 +2,14 @@
 
 This repo now contains a deployable Supabase backend at `supabase/` with:
 
-- a root-level function folder at `supabase/functions/make-server-f118884a`
+- a root-level function folder at `supabase/functions/webhook-listener`
 - a KV persistence migration at `supabase/migrations/202604150001_init_kv_store.sql`
 - npm scripts to link, push the database schema, and deploy the edge function
 
 ## What this enables
 
 - persistent storage in `public.kv_store_f118884a`
-- the `make-server-f118884a` edge function for auth, dashboard data, trades, strategies, webhooks, notifications, brokers, Alpaca integration, and MCP endpoints
+- the `webhook-listener` edge function for auth, dashboard data, trades, strategies, webhooks, notifications, brokers, Alpaca integration, OMS/risk routing, and StrategyLab endpoints
 
 ## One-time setup
 
@@ -39,9 +39,9 @@ npm run backend:enable
 
 That runs:
 
-- `supabase link --project-ref mligzafrdckazvagqeht`
+- `supabase link --project-ref dzboqhobrmzglyuofcyk`
 - `supabase db push`
-- `supabase functions deploy make-server-f118884a --no-verify-jwt`
+- `supabase functions deploy webhook-listener --no-verify-jwt`
 
 ## Local development
 
@@ -53,6 +53,6 @@ npm run supabase:functions:serve
 
 ## Important notes
 
-- The frontend and local Supabase CLI link both point at project `mligzafrdckazvagqeht`.
-- The function entrypoint keeps the existing `/make-server-f118884a/...` API paths intact, so the frontend does not need route changes.
+- The frontend and local Supabase CLI link both point at project `dzboqhobrmzglyuofcyk`.
+- The function entrypoint serves the existing `/webhook-listener/...` API paths used by the frontend.
 - `verify_jwt = false` is preserved for the deployed function because webhook endpoints need to accept unauthenticated external POST requests.

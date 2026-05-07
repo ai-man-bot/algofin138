@@ -1,4 +1,13 @@
 import { createClient } from "npm:@supabase/supabase-js@2.45.2";
+import { handleStrategyLabRoutes } from "./strategy_lab_routes.ts";
+import { normalizeBrokerSnapshot } from "../../../src/utils/brokerModels.ts";
+import { createOrderLifecycleFromSignal } from "../../../src/utils/orderLifecycle.ts";
+import {
+  buildOmsOrderInsertRow,
+  buildRiskAuditInsertRow,
+  buildStrategyLabSignalFromPayload,
+  buildWebhookEventStatusUpdate,
+} from "../../../src/utils/orderRoutingPersistence.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -142,6 +151,92 @@ async function readJson(req: Request) {
   return req.json().catch(() => ({}));
 }
 
+async function getPrimaryBrokerAccount(supabase: any, userId: string, brokerAccountId?: string | null) {
+  let query = supabase
+    .from("broker_accounts")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("broker_type", "alpaca")
+    .eq("connected", true);
+
+  if (brokerAccountId) {
+    query = query.eq("id", brokerAccountId);
+  } else {
+    query = query.order("created_at", { ascending: false }).limit(1);
+  }
+
+  const { data, error } = await query.maybeSingle();
+
+  if (error || !data) {
+    return { broker: null, error: error?.message || "No connected Alpaca broker account found" };
+  }
+
+  return { broker: data, error: null };
+}
+
+async function getRiskSettings(supabase: any, userId: string) {
+  const { data, error } = await supabase
+    .from("risk_settings")
+    .select("*")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error || !data) {
+    return {};
+  }
+
+  return {
+    killSwitchEnabled: Boolean(data.kill_switch_enabled),
+    authorizedUserIds: Array.isArray(data.authorized_user_ids) ? data.authorized_user_ids : null,
+  };
+}
+
+async function fetchAlpacaBrokerSnapshot(supabase: any, userId: string, brokerAccountId?: string | null) {
+  const [{ broker }, { headers, error: credentialsError }] = await Promise.all([
+    getPrimaryBrokerAccount(supabase, userId, brokerAccountId),
+    getAlpacaHeaders(supabase, userId),
+  ]);
+
+  if (credentialsError || !headers) {
+    return {
+      snapshot: null,
+      error: credentialsError || "No Alpaca credentials found. Connect an Alpaca broker account first.",
+    };
+  }
+
+  const [account, positions, orders] = await Promise.all([
+    proxyAlpacaJson("https://paper-api.alpaca.markets/v2/account", headers),
+    proxyAlpacaJson("https://paper-api.alpaca.markets/v2/positions", headers),
+    proxyAlpacaJson("https://paper-api.alpaca.markets/v2/orders?status=all&limit=500&direction=desc", headers),
+  ]);
+
+  if (!account.ok) {
+    return { snapshot: null, error: account.data?.message || account.data?.error || "Failed to load Alpaca account" };
+  }
+
+  const connection = {
+    ...(broker || {
+      id: brokerAccountId || "alpaca:env",
+      broker_type: "alpaca",
+      name: "Alpaca",
+      connected: true,
+      paper: true,
+    }),
+    brokerType: broker?.broker_type || broker?.brokerType || "alpaca",
+    connected: true,
+  };
+
+  return {
+    snapshot: normalizeBrokerSnapshot({
+      connection,
+      account: account.data || {},
+      positions: Array.isArray(positions.data) ? positions.data : [],
+      orders: Array.isArray(orders.data) ? orders.data : [],
+    }),
+    error: null,
+  };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -149,6 +244,11 @@ Deno.serve(async (req: Request) => {
 
   const url = new URL(req.url);
   const path = url.pathname;
+
+  const strategyLabResponse = await handleStrategyLabRoutes(req, path, jsonResponse);
+  if (strategyLabResponse) {
+    return strategyLabResponse;
+  }
 
   if (
     path.endsWith("/platform-orders/route") ||
@@ -454,7 +554,17 @@ Deno.serve(async (req: Request) => {
       broker_account_id: route.broker_account_id ?? null,
       payload,
       status: "received",
-    });
+    })
+    .select("*")
+    .maybeSingle();
+
+  const insertedEvent = !eventInsertError ? (await supabase
+    .from("webhook_events")
+    .select("*")
+    .eq("route_id", route.id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()).data : null;
 
   if (eventInsertError) {
     console.error("webhook_events insert failed:", eventInsertError);
@@ -470,6 +580,109 @@ Deno.serve(async (req: Request) => {
 
   if (routeUpdateError) {
     console.error("webhook_routes update failed:", routeUpdateError);
+  }
+
+  const { data: latestExport } = await supabase
+    .from("strategy_lab_exports")
+    .select("*")
+    .eq("route_id", route.id)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (route.user_id) {
+    try {
+      const signal = buildStrategyLabSignalFromPayload(payload || {}, {
+        fallbackSource: "webhook",
+        strategyId: route.strategy_id ?? null,
+      });
+      const [{ snapshot, error: snapshotError }, riskSettings] = await Promise.all([
+        fetchAlpacaBrokerSnapshot(supabase, route.user_id, route.broker_account_id ?? null),
+        getRiskSettings(supabase, route.user_id),
+      ]);
+
+      if (snapshotError || !snapshot) {
+        throw new Error(snapshotError || "Failed to load broker snapshot");
+      }
+
+      const routed = createOrderLifecycleFromSignal({
+        signal,
+        broker: snapshot.connection,
+        userId: route.user_id,
+        account: snapshot.account,
+        positions: snapshot.positions,
+        openOrders: snapshot.openOrders,
+        riskSettings,
+      });
+
+      const { data: auditRow, error: auditError } = await supabase
+        .from("risk_audit_records")
+        .insert(buildRiskAuditInsertRow(routed.auditRecord))
+        .select("*")
+        .single();
+
+      if (auditError) {
+        throw new Error(`Failed to persist risk audit record: ${auditError.message}`);
+      }
+
+      const { data: orderRow, error: orderError } = await supabase
+        .from("oms_orders")
+        .insert(buildOmsOrderInsertRow(route.user_id, routed.order))
+        .select("*")
+        .single();
+
+      if (orderError) {
+        throw new Error(`Failed to persist OMS order: ${orderError.message}`);
+      }
+
+      if (insertedEvent?.id) {
+        const { error: eventUpdateError } = await supabase
+          .from("webhook_events")
+          .update(buildWebhookEventStatusUpdate({
+            status: routed.riskDecision.status === "block" ? "blocked" : "accepted",
+            orderId: orderRow.id,
+            auditRecordId: auditRow.id,
+            riskDecision: routed.riskDecision,
+            exportId: latestExport?.id ?? null,
+          }))
+          .eq("id", insertedEvent.id);
+
+        if (eventUpdateError) {
+          console.error("webhook_events routing update failed:", eventUpdateError);
+        }
+      }
+
+      return jsonResponse({
+        ok: true,
+        matched_route: route,
+        routing: {
+          status: routed.riskDecision.status === "block" ? "blocked" : "accepted",
+          order: orderRow,
+          riskDecision: routed.riskDecision,
+          auditRecord: auditRow,
+          exportRecordId: latestExport?.id ?? null,
+        },
+        message: routed.riskDecision.status === "block"
+          ? "Webhook received and blocked by risk controls."
+          : "Webhook received and routed through OMS.",
+      });
+    } catch (routingError: any) {
+      if (insertedEvent?.id) {
+        const { error: eventUpdateError } = await supabase
+          .from("webhook_events")
+          .update({
+            status: "routing_failed",
+            decision_summary: routingError?.message || "Routing failed",
+          })
+          .eq("id", insertedEvent.id);
+
+        if (eventUpdateError) {
+          console.error("webhook_events failure update failed:", eventUpdateError);
+        }
+      }
+
+      console.warn("Webhook routing skipped or failed:", routingError?.message || routingError);
+    }
   }
 
   return jsonResponse({

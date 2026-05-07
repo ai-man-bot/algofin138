@@ -14,7 +14,7 @@ jobs:
     permissions:
       contents: read
     env:
-      SUPABASE_PROJECT_REF: mligzafrdckazvagqeht
+          SUPABASE_PROJECT_REF: dzboqhobrmzglyuofcyk
       SUPABASE_FUNCTION_NAME: make-server-f118884a
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
     steps:

@@ -604,6 +604,89 @@ export const tradeAssistantAPI = {
 };
 
 /* =========================
+   STRATEGY LAB
+========================= */
+
+export const strategyLabAPI = {
+  getQuote: (symbol: string, options: CachedRequestOptions = {}) =>
+    cachedApiRequest(`/strategy-lab/market/quote?symbol=${encodeURIComponent(symbol)}`, {
+      method: 'GET',
+      ttlMs: 15_000,
+      ...options,
+    }),
+
+  getBars: (
+    symbol: string,
+    params: {
+      timeframe?: string;
+      period?: string;
+      periodStart?: string;
+      periodEnd?: string;
+      limit?: number;
+    } = {},
+    options: CachedRequestOptions = {},
+  ) => {
+    const query = new URLSearchParams({
+      symbol,
+      timeframe: params.timeframe || '1D',
+      period: params.period || '2y',
+    });
+
+    if (params.periodStart) query.set('period_start', params.periodStart);
+    if (params.periodEnd) query.set('period_end', params.periodEnd);
+    if (params.limit) query.set('limit', String(params.limit));
+
+    return cachedApiRequest(`/strategy-lab/market/bars?${query.toString()}`, {
+      method: 'GET',
+      ttlMs: 60_000,
+      ...options,
+    });
+  },
+
+  createStrategy: (payload: any) =>
+    mutate('/strategy-lab/strategies', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, ['/strategy-lab/strategies']),
+
+  updateStrategy: (id: string, payload: any) =>
+    mutate(`/strategy-lab/strategies/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }, ['/strategy-lab/strategies']),
+
+  generatePineScript: (strategyId: string, payload: any) =>
+    mutate(`/strategy-lab/strategies/${strategyId}/pinescript`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, ['/strategy-lab/strategies']),
+
+  runBacktest: (payload: any) =>
+    mutate('/strategy-lab/backtests', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, ['/strategy-lab/backtests']),
+
+  getBacktest: (jobId: string, options: CachedRequestOptions = {}) =>
+    cachedApiRequest(`/strategy-lab/backtests/${jobId}`, { method: 'GET', ttlMs: 30_000, ...options }),
+
+  runOptimization: (payload: any) =>
+    mutate('/strategy-lab/optimizations', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, ['/strategy-lab/optimizations']),
+
+  getOptimization: (jobId: string, options: CachedRequestOptions = {}) =>
+    cachedApiRequest(`/strategy-lab/optimizations/${jobId}`, { method: 'GET', ttlMs: 30_000, ...options }),
+
+  exportToAlgoFin: (payload: any) =>
+    mutate('/strategy-lab/exports/algofin', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, ['/strategy-lab/strategies', '/webhooks']),
+};
+
+/* =========================
    PLATFORM ORDER ROUTING
 ========================= */
 

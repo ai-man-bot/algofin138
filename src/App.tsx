@@ -10,13 +10,14 @@ import './utils/seedData'; // Import seed data utilities
 import './utils/pwaCheck'; // Import PWA health check (exposes checkPWAHealth() in console)
 import './utils/debugUtils'; // Import debug utilities (exposes debugAlgoFin in console)
 
-type Screen = 'login' | 'reset-password' | 'dashboard' | 'trades' | 'brokers' | 'strategy' | 'webhooks' | 'notifications' | 'account' | 'webhook-debug' | 'analytics' | 'performance' | 'operations';
-const authenticatedScreens: Screen[] = ['dashboard', 'strategy', 'trades', 'analytics', 'performance', 'operations', 'webhooks', 'brokers', 'notifications', 'account', 'webhook-debug'];
+type Screen = 'login' | 'reset-password' | 'dashboard' | 'trades' | 'brokers' | 'strategy' | 'strategy-lab' | 'webhooks' | 'notifications' | 'account' | 'webhook-debug' | 'analytics' | 'performance' | 'operations';
+const authenticatedScreens: Screen[] = ['dashboard', 'strategy', 'strategy-lab', 'trades', 'analytics', 'performance', 'operations', 'webhooks', 'brokers', 'notifications', 'account', 'webhook-debug'];
 
 const Dashboard = lazy(() => import('./components/Dashboard').then((module) => ({ default: module.Dashboard })));
 const TradesTab = lazy(() => import('./components/TradesTab').then((module) => ({ default: module.TradesTab })));
 const BrokersPage = lazy(() => import('./components/BrokersPage').then((module) => ({ default: module.BrokersPage })));
 const StrategyPage = lazy(() => import('./components/StrategyPage').then((module) => ({ default: module.StrategyPage })));
+const StrategyLabPage = lazy(() => import('./components/StrategyLabPage').then((module) => ({ default: module.StrategyLabPage })));
 const WebhooksPage = lazy(() => import('./components/WebhooksPage').then((module) => ({ default: module.WebhooksPage })));
 const NotificationsPage = lazy(() => import('./components/NotificationsPage').then((module) => ({ default: module.NotificationsPage })));
 const AccountPage = lazy(() => import('./components/AccountPage').then((module) => ({ default: module.AccountPage })));
@@ -275,6 +276,8 @@ export default function App() {
         return <Dashboard onNavigate={setCurrentScreen} selectedBrokerId={selectedBrokerId} setSelectedBrokerId={setSelectedBrokerId} />;
       case 'strategy':
         return <StrategyPage onNavigate={setCurrentScreen} />;
+      case 'strategy-lab':
+        return <StrategyLabPage />;
       case 'trades':
         return <TradesTab selectedBrokerId={selectedBrokerId} setSelectedBrokerId={setSelectedBrokerId} />;
       case 'analytics':
@@ -328,6 +331,16 @@ export default function App() {
                   }`}
                 >
                   Strategy
+                </button>
+                <button
+                  onClick={() => setCurrentScreen('strategy-lab')}
+                  className={`rounded-md px-4 py-2 transition-colors ${
+                    currentScreen === 'strategy-lab'
+                      ? 'bg-blue-500 text-white'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  StrategyLab
                 </button>
                 <button
                   onClick={() => setCurrentScreen('trades')}

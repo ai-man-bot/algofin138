@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { brokersAPI, getCachedRequestSnapshot, getRequestMetrics, notificationsAPI, testWebhook } from '../src/utils/api.ts';
+import { brokersAPI, getCachedRequestSnapshot, getRequestMetrics, notificationsAPI, strategyLabAPI, testWebhook } from '../src/utils/api.ts';
 
 const originalFetch = globalThis.fetch;
 
@@ -44,6 +44,19 @@ await testWebhook('https://example.com/hook', { action: 'buy' });
 
 assert.equal(fetchCount, 7);
 
+await strategyLabAPI.getQuote('AAPL', { forceRefresh: true });
+await strategyLabAPI.getBars('AAPL', { timeframe: '1D', period: '2y', limit: 250 }, { forceRefresh: true });
+await strategyLabAPI.createStrategy({ name: 'RSI Momentum', symbol: 'AAPL' });
+await strategyLabAPI.updateStrategy('strategy-lab-1', { name: 'RSI Momentum v2' });
+await strategyLabAPI.generatePineScript('strategy-lab-1', { routeToken: 'route-token' });
+await strategyLabAPI.runBacktest({ strategyId: 'strategy-lab-1', symbol: 'AAPL' });
+await strategyLabAPI.getBacktest('backtest-1', { forceRefresh: true });
+await strategyLabAPI.runOptimization({ strategyId: 'strategy-lab-1', symbol: 'AAPL' });
+await strategyLabAPI.getOptimization('optimizer-1', { forceRefresh: true });
+await strategyLabAPI.exportToAlgoFin({ strategyId: 'strategy-lab-1', mode: 'paper' });
+
+assert.equal(fetchCount, 17);
+
 const metrics = getRequestMetrics();
 assert.ok(metrics.some((metric) => metric.path === '/brokers' && metric.method === 'GET'));
 assert.ok(metrics.some((metric) => metric.path === '/brokers' && metric.method === 'POST'));
@@ -51,6 +64,16 @@ assert.ok(metrics.some((metric) => metric.path === '/notifications/note-1/read' 
 assert.ok(metrics.some((metric) => metric.path === '/notifications/mark-all-read' && metric.method === 'POST'));
 assert.ok(metrics.some((metric) => metric.path === '/notification-settings' && metric.method === 'POST'));
 assert.ok(metrics.some((metric) => metric.path === '/test-webhook' && metric.method === 'POST'));
+assert.ok(metrics.some((metric) => metric.path === '/strategy-lab/market/quote?symbol=AAPL' && metric.method === 'GET'));
+assert.ok(metrics.some((metric) => metric.path.startsWith('/strategy-lab/market/bars?') && metric.method === 'GET'));
+assert.ok(metrics.some((metric) => metric.path === '/strategy-lab/strategies' && metric.method === 'POST'));
+assert.ok(metrics.some((metric) => metric.path === '/strategy-lab/strategies/strategy-lab-1' && metric.method === 'PUT'));
+assert.ok(metrics.some((metric) => metric.path === '/strategy-lab/strategies/strategy-lab-1/pinescript' && metric.method === 'POST'));
+assert.ok(metrics.some((metric) => metric.path === '/strategy-lab/backtests' && metric.method === 'POST'));
+assert.ok(metrics.some((metric) => metric.path === '/strategy-lab/backtests/backtest-1' && metric.method === 'GET'));
+assert.ok(metrics.some((metric) => metric.path === '/strategy-lab/optimizations' && metric.method === 'POST'));
+assert.ok(metrics.some((metric) => metric.path === '/strategy-lab/optimizations/optimizer-1' && metric.method === 'GET'));
+assert.ok(metrics.some((metric) => metric.path === '/strategy-lab/exports/algofin' && metric.method === 'POST'));
 
 if (originalFetch) {
   globalThis.fetch = originalFetch;

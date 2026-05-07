@@ -62,10 +62,10 @@
             "build": "vite build",
             "test": "node --experimental-strip-types tests/run-tests.ts",
             "supabase:login": "supabase login",
-            "supabase:link": "supabase link --project-ref mligzafrdckazvagqeht",
+            "supabase:link": "supabase link --project-ref dzboqhobrmzglyuofcyk",
             "supabase:db:push": "supabase db push",
-            "supabase:functions:serve": "supabase functions serve make-server-f118884a --no-verify-jwt",
-            "supabase:functions:deploy": "supabase functions deploy make-server-f118884a --no-verify-jwt",
+            "supabase:functions:serve": "supabase functions serve webhook-listener --no-verify-jwt",
+            "supabase:functions:deploy": "supabase functions deploy webhook-listener --no-verify-jwt",
             "backend:enable": "npm run supabase:link && npm run supabase:db:push && npm run supabase:functions:deploy"
       }
 }

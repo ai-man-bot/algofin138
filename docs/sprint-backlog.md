@@ -1,6 +1,6 @@
 # Sprint Roadmap
 
-Last updated: 2026-05-06
+Last updated: 2026-05-07
 
 This document converts the current enhancement backlog into a 3-sprint implementation roadmap with estimates, dependencies, and phased delivery targets.
 
@@ -218,7 +218,7 @@ If the team is small, Sprint 3 should be treated as a controlled phase-1 deliver
 
 ## Sprint 1 Implementation Status
 
-Status as of 2026-05-06:
+Status as of 2026-05-07:
 
 - Shared request cache exists in `src/utils/requestCache.ts` with stale-while-revalidate behavior, in-flight request deduplication, invalidation, request status snapshots, and status subscriptions.
 - Cacheable read APIs in `src/utils/api.ts` use the shared cache so tab switches can reuse recent data while background refreshes update stale entries.
@@ -229,7 +229,7 @@ Status as of 2026-05-06:
 
 ## Sprint 2 Implementation Status
 
-Status as of 2026-05-06:
+Status as of 2026-05-07:
 
 - Normalized broker snapshots are available through `normalizeBrokerSnapshot` in `src/utils/brokerModels.ts`.
 - The frontend API exposes `platformBrokerAPI` in `src/utils/api.ts` so dashboard and trades read paths can consume normalized broker connections, accounts, positions, orders, and open orders.
@@ -240,13 +240,13 @@ Status as of 2026-05-06:
 
 Remaining Sprint 2 hardening:
 
-- Add durable database migrations or table setup for `risk_settings` and `risk_audit_records` in the linked Supabase project.
-- Move webhook and strategy-triggered order paths through the same shared risk gate used by Trade Assistant.
 - Add an admin-facing risk settings/audit UI so users can configure kill switch, authorized users, allowlists, restricted symbols, and view risk decisions.
+- Durable Supabase storage for `risk_settings`, `risk_audit_records`, `oms_orders`, `oms_executions`, and `strategy_lab_*` tables is now applied on project `dzboqhobrmzglyuofcyk`.
+- Webhook-driven StrategyLab exports now route through the shared OMS plus risk path in `supabase/functions/webhook-listener/index.ts`, persisting OMS orders and risk audit records before returning accepted or blocked results.
 
 ## Sprint 3 Implementation Status
 
-Status as of 2026-05-06:
+Status as of 2026-05-07:
 
 - Phase-1 OMS/EMS order lifecycle utilities exist in `src/utils/orderLifecycle.ts`.
 - The order lifecycle model can represent normalized order legs, advanced instructions, lifecycle events, accepted/rejected states, partial fills, filled orders, cancellations, and reconciliation updates.
@@ -254,11 +254,12 @@ Status as of 2026-05-06:
 - Advanced-order capability checks now produce a broker support matrix for options, multi-leg options, OCO/bracket orders, trailing stops, GTD, IOC, and FOK instructions.
 - Python strategy runner signal intents can be converted into platform lifecycle orders and routed through the existing risk engine before being accepted.
 - Risk audit records are generated for Python-generated signals, including blocked unsupported options orders.
+- StrategyLab backend routes now persist strategies, backtests, optimizer jobs, and export records in Supabase through `supabase/functions/webhook-listener/strategy_lab_routes.ts`.
+- StrategyLab export plus live webhook routing now create shared OMS order plus risk-audit rows in the deployed `webhook-listener` path.
 
 Remaining Sprint 3 hardening:
 
-- Persist OMS lifecycle orders, executions, and reconciliation events in Supabase tables instead of keeping the current implementation as frontend/platform utilities.
-- Add backend routes so webhook, Trade Assistant, manual, and Python strategy orders all use the same lifecycle service.
+- Expand persistence beyond accepted OMS order plus audit creation so reconciliation updates and richer lifecycle state are stored from the live broker feedback loop.
 - Wire real broker reconciliation polling/webhooks into `reconcileOrderLifecycle`.
 - Add UI for advanced order entry, options order review, lifecycle status, and broker capability warnings.
 - Expand options metadata to include contract lookup, pricing, greeks, expiration chains, and broader multi-leg strategy templates.
@@ -270,7 +271,7 @@ The original in-repo roadmap above directly defined Sprints 1-3. Sprints 4-5 bel
 
 ### Sprint 1: Performance and Architecture Foundations
 
-Completion status as of 2026-05-06:
+Completion status as of 2026-05-07:
 
 - Shared request caching and stale-while-revalidate behavior are implemented in `src/utils/requestCache.ts`.
 - Cacheable API read paths use shared caching through `src/utils/api.ts`.
@@ -280,22 +281,24 @@ Completion status as of 2026-05-06:
 
 ### Sprint 2: Broker Abstraction and Risk Controls
 
-Completion status as of 2026-05-06:
+Completion status as of 2026-05-07:
 
 - Normalized broker account, position, order, connection, and capability models exist in `src/utils/brokerModels.ts`.
 - Dashboard and Trades primary broker-loading paths consume the normalized broker facade.
 - Risk evaluation exists in `src/utils/riskEngine.ts` and covers authorization, kill switch, unsupported asset classes, buying power, duplicate orders, symbol restrictions, allowlists, daily-loss warnings, position caps, and exposure caps.
-- Durable Supabase table definitions for `risk_settings` and `risk_audit_records` are defined in `supabase/migrations/202605060001_sprint_2_5_platform_tables.sql`.
+- Durable Supabase tables for `risk_settings` and `risk_audit_records` are both defined locally and applied on Supabase project `dzboqhobrmzglyuofcyk`.
+- Webhook-driven non-UI order intents now pass through the shared OMS plus risk path before persistence.
 
 ### Sprint 3: OMS/EMS and Options Phase 1
 
-Completion status as of 2026-05-06:
+Completion status as of 2026-05-07:
 
 - Normalized OMS/EMS lifecycle utilities exist in `src/utils/orderLifecycle.ts`.
 - Lifecycle orders support normalized legs, advanced instructions, lifecycle events, accepted/rejected states, partial fills, filled orders, cancellations, and reconciliation updates.
 - Phase-1 options modeling supports OCC-style option symbols and limited multi-leg options such as vertical spreads.
 - Broker capability checks cover options, multi-leg options, OCO/brackets, trailing stops, GTD, IOC, and FOK.
-- Durable Supabase table definitions for `oms_orders` and `oms_executions` are defined in `supabase/migrations/202605060001_sprint_2_5_platform_tables.sql`.
+- Durable Supabase tables for `oms_orders` and `oms_executions` are both defined locally and applied on Supabase project `dzboqhobrmzglyuofcyk`.
+- StrategyLab export plus webhook routing now create live OMS order plus risk-audit rows in the deployed `webhook-listener` path.
 
 ### Sprint 4: Trade Assistant and Strategy Automation
 
@@ -320,8 +323,8 @@ Completion status as of 2026-05-06:
 
 ### Remaining Beyond-Sprint Hardening
 
-- Apply the new Supabase migration to the linked project with `npm run supabase:db:push`.
-- Implement server endpoints behind the new frontend API contracts: `/platform-orders/route`, `/platform-orders/:id/reconcile`, `/strategy-automation/schedules`, and `/strategy-automation/run`.
-- Move the legacy public webhook execution path through `routeOrderIntentThroughRiskGate` before broker submission.
+- Align or retire the older `mligzafrdckazvagqeht` Supabase project references if that environment is no longer used.
+- Expand live verification beyond the temporary smoke-test flow to a stable seeded auth plus broker test fixture.
+- Implement richer lifecycle persistence behind `/platform-orders/:id/reconcile` and the broader strategy automation execution loop.
 - Deploy a real Python worker/service for scheduled research and signal generation; the current implementation covers the TypeScript ingestion, filtering, and risk-gated routing contract.
 - Add UI screens for risk configuration, risk audit review, OMS lifecycle status, strategy automation schedules, and production readiness status.

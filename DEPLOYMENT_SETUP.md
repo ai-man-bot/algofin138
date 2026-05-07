@@ -47,7 +47,7 @@ After this, pushes to GitHub update the Render static service.
 In GitHub repo settings, add these secrets:
 
 - `SUPABASE_ACCESS_TOKEN` (from Supabase account settings)
-- `SUPABASE_DB_PASSWORD` (database password for project `mligzafrdckazvagqeht`)
+- `SUPABASE_DB_PASSWORD` (database password for project `dzboqhobrmzglyuofcyk`)
 
 Then push to `main` with changes under `supabase/**`; GitHub Actions will:
 
