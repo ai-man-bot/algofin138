@@ -251,7 +251,7 @@ export function buildAdvancedOrderSupportMatrix(
 
   return {
     supportsOptions,
-    supportsMultiLegOptions: supportsOptions && broker.provider === 'interactive_brokers',
+    supportsMultiLegOptions: supportsOptions && ['alpaca', 'interactive_brokers'].includes(broker.provider),
     supportsOco: supportsBracketOrders,
     supportsBracketOrders,
     supportsTrailingStops,

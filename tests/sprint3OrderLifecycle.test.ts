@@ -70,8 +70,8 @@ assert.equal(spreadOrder.instructions.timeInForce, 'gtd');
 assert.deepEqual(spreadOrder.capabilityWarnings, []);
 
 const alpacaSupport = buildAdvancedOrderSupportMatrix(alpacaConnection, spreadOrder);
-assert.equal(alpacaSupport.supportsOptions, false);
-assert.equal(alpacaSupport.supportsMultiLegOptions, false);
+assert.equal(alpacaSupport.supportsOptions, true);
+assert.equal(alpacaSupport.supportsMultiLegOptions, true);
 
 const reconciled = reconcileOrderLifecycle(spreadOrder, [
   {
@@ -99,7 +99,7 @@ assert.equal(reconciled.filledQuantity, 1);
 assert.equal(reconciled.averageFillPrice, 5);
 assert.equal(reconciled.lifecycleEvents.some((event) => event.type === 'partial_fill'), true);
 
-const blockedSignal = createOrderLifecycleFromSignal({
+const allowedAlpacaOptionSignal = createOrderLifecycleFromSignal({
   signal: {
     strategyId: 'strategy-options-1',
     symbol: 'AAPL260619C00200000',
@@ -131,10 +131,10 @@ const blockedSignal = createOrderLifecycleFromSignal({
   openOrders: [],
 });
 
-assert.equal(blockedSignal.riskDecision.status, 'block');
-assert.equal(blockedSignal.order.status, 'rejected');
-assert.equal(blockedSignal.auditRecord.source, 'python-strategy-runner');
-assert.equal(blockedSignal.auditRecord.issueCodes.includes('unsupported_asset_class'), true);
+assert.equal(allowedAlpacaOptionSignal.riskDecision.status, 'allow');
+assert.equal(allowedAlpacaOptionSignal.order.status, 'accepted');
+assert.equal(allowedAlpacaOptionSignal.auditRecord.source, 'python-strategy-runner');
+assert.equal(allowedAlpacaOptionSignal.auditRecord.issueCodes.includes('unsupported_asset_class'), false);
 
 const allowedSignal = createOrderLifecycleFromSignal({
   signal: {

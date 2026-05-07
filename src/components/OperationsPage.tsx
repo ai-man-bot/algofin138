@@ -300,8 +300,8 @@ export function OperationsPage() {
                 <ReviewItem label="Strategy type" value={optionOrder.strategyType === 'vertical' ? 'Vertical spread' : 'Single leg'} />
                 <ReviewItem label="Estimated premium" value={`$${(Number(optionOrder.quantity || 0) * Number(optionOrder.limitPrice || 0) * 100).toFixed(2)}`} />
               </div>
-              <div className="mt-5 rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-4 text-sm text-yellow-300">
-                Broker capability checks run before submission. Alpaca is currently blocked for options in the shared risk gate.
+              <div className="mt-5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-300">
+                Broker capability checks run before submission. Alpaca options are enabled in the shared risk gate; account approval level still needs to be checked before live submission.
               </div>
             </div>
           </div>
@@ -374,7 +374,7 @@ export function OperationsPage() {
               </div>
               <p className="text-sm text-slate-400">{summarizeReadiness(readiness)}</p>
               <div className="mt-5 rounded-lg border border-slate-700/50 bg-slate-800/30 p-4 text-sm text-slate-300">
-                Supabase migrations are now represented in the repo. Runtime route deployment and live environment variables should be checked before enabling unattended automation.
+                Supabase migrations are represented in the repo and the readiness check now reflects current deployed prerequisites. Broker credentials are checked through connected accounts instead of a global Alpaca API key.
               </div>
             </div>
             <div className="space-y-4">

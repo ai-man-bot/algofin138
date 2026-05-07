@@ -142,7 +142,7 @@ function buildBrokerCapabilities(provider: BrokerProvider): BrokerCapabilities {
   if (provider === 'alpaca') {
     return {
       supportsEquities: true,
-      supportsOptions: false,
+      supportsOptions: true,
       supportsCrypto: false,
       supportsFractionalShares: true,
       supportsBracketOrders: true,

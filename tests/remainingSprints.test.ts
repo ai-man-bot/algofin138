@@ -63,7 +63,7 @@ assert.equal(routedWebhook.order.status, 'accepted');
 assert.equal(routedWebhook.order.source, 'webhook');
 assert.equal(routedWebhook.auditRecord.source, 'webhook');
 
-const blockedOptionsWebhook = routeOrderIntentThroughRiskGate({
+const alpacaOptionsWebhook = routeOrderIntentThroughRiskGate({
   intent: createPlatformOrderIntent({
     source: 'webhook',
     strategyId: 'strategy-2',
@@ -89,9 +89,9 @@ const blockedOptionsWebhook = routeOrderIntentThroughRiskGate({
   openOrders: [],
 });
 
-assert.equal(blockedOptionsWebhook.decision.status, 'block');
-assert.equal(blockedOptionsWebhook.order.status, 'rejected');
-assert.equal(blockedOptionsWebhook.auditRecord.issueCodes.includes('unsupported_asset_class'), true);
+assert.equal(alpacaOptionsWebhook.decision.status, 'allow');
+assert.equal(alpacaOptionsWebhook.order.status, 'accepted');
+assert.equal(alpacaOptionsWebhook.auditRecord.issueCodes.includes('unsupported_asset_class'), false);
 
 const schedule = createStrategyAutomationSchedule({
   strategyId: 'strategy-1',
@@ -144,7 +144,7 @@ assert.equal(runPlan.blockedOrders.length, 0);
 assert.equal(runPlan.auditRecords.length, 2);
 
 const readiness = evaluateProductionReadiness({
-  requiredEnvVars: ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'ALPACA_API_KEY'],
+  requiredEnvVars: ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'],
   presentEnvVars: ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'],
   requiredMigrations: [
     'risk_settings',
@@ -174,8 +174,8 @@ const readiness = evaluateProductionReadiness({
   ],
 });
 
-assert.equal(readiness.status, 'blocked');
-assert.ok(readiness.blockers.some((blocker) => blocker.includes('ALPACA_API_KEY')));
-assert.ok(summarizeReadiness(readiness).includes('blocked'));
+assert.equal(readiness.status, 'ready');
+assert.equal(readiness.blockers.length, 0);
+assert.ok(summarizeReadiness(readiness).includes('ready'));
 
 console.log('remaining Sprint 4 and Sprint 5 tests passed');

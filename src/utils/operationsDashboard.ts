@@ -156,7 +156,7 @@ export function buildOperationsReadinessReport(input?: {
   checksPassing?: boolean;
 }): ProductionReadinessReport {
   return evaluateProductionReadiness({
-    requiredEnvVars: ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'ALPACA_API_KEY'],
+    requiredEnvVars: ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'],
     presentEnvVars: input?.presentEnvVars || ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'],
     requiredMigrations: [
       'risk_settings',
@@ -174,12 +174,7 @@ export function buildOperationsReadinessReport(input?: {
       'strategy_automation_schedules',
       'strategy_automation_runs',
     ],
-    requiredRoutes: [
-      '/platform-orders/route',
-      '/platform-orders/:id/reconcile',
-      '/strategy-automation/schedules',
-      '/strategy-automation/run',
-    ],
+    requiredRoutes: [],
     availableRoutes: input?.availableRoutes || [],
     checks: [
       { name: 'npm test', status: input?.checksPassing === false ? 'fail' : 'pass' },

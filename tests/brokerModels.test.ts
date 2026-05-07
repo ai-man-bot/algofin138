@@ -20,7 +20,7 @@ const broker = normalizeBrokerConnection({
 assert.equal(broker.id, 'alpaca:paper-123');
 assert.equal(broker.provider, 'alpaca');
 assert.equal(broker.capabilities.supportsEquities, true);
-assert.equal(broker.capabilities.supportsOptions, false);
+assert.equal(broker.capabilities.supportsOptions, true);
 assert.equal(broker.status, 'connected');
 
 const snakeCaseBroker = normalizeBrokerConnection({
@@ -225,7 +225,11 @@ const capabilityDecision = evaluateRisk({
     assetClass: 'option',
     requestedAt: '2026-04-24T10:30:00Z',
   },
-  broker: snapshot.connection,
+  broker: normalizeBrokerConnection({
+    id: 'manual:watch-1',
+    brokerType: 'manual',
+    connected: true,
+  }),
   account: {
     equity: 100000,
     buyingPower: 1000,
@@ -243,6 +247,31 @@ const capabilityDecision = evaluateRisk({
 assert.equal(capabilityDecision.status, 'block');
 assert.ok(capabilityDecision.issues.some((issue) => issue.code === 'unauthorized_user'));
 assert.ok(capabilityDecision.issues.some((issue) => issue.code === 'unsupported_asset_class'));
+
+const alpacaOptionsCapabilityDecision = evaluateRisk({
+  userId: 'user-1',
+  order: {
+    symbol: 'AAPL250117C00200000',
+    side: 'buy',
+    quantity: 1,
+    orderType: 'limit',
+    limitPrice: 5,
+    assetClass: 'option',
+    requestedAt: '2026-04-24T10:35:00Z',
+  },
+  broker: snapshot.connection,
+  account: {
+    equity: 100000,
+    buyingPower: 1000,
+    dayChange: 0,
+    dayChangePercent: 0,
+    notionalExposure: 0,
+  },
+  positions: [],
+  openOrders: [],
+});
+
+assert.equal(alpacaOptionsCapabilityDecision.status, 'allow');
 
 const buyingPowerDecision = evaluateRisk({
   userId: 'user-1',

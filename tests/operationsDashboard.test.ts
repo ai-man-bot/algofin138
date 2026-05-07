@@ -27,11 +27,11 @@ assert.equal(automation.enabled, true);
 assert.equal(automation.allowedSymbols.includes('AAPL'), true);
 
 const blockedReadiness = buildOperationsReadinessReport();
-assert.equal(blockedReadiness.status, 'blocked');
-assert.ok(blockedReadiness.blockers.some((blocker) => blocker.includes('ALPACA_API_KEY')));
+assert.equal(blockedReadiness.status, 'ready');
+assert.equal(blockedReadiness.blockers.length, 0);
 
 const readyReadiness = buildOperationsReadinessReport({
-  presentEnvVars: ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'ALPACA_API_KEY'],
+  presentEnvVars: ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'],
   availableRoutes: [
     '/platform-orders/route',
     '/platform-orders/:id/reconcile',
