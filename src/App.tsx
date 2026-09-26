@@ -285,7 +285,7 @@ export default function App() {
       case 'performance':
         return <PerformanceAnalyticsPage />;
       case 'operations':
-        return <OperationsPage />;
+        return <OperationsPage active={currentScreen === 'operations'} />;
       case 'webhooks':
         return <WebhooksPage />;
       case 'brokers':

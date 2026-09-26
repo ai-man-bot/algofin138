@@ -89,7 +89,7 @@ export interface StrategySignal {
   assetClass?: AssetClass;
   side: LegSide;
   quantity: number;
-  orderType?: RiskOrderRequest['orderType'];
+  orderType?: AdvancedOrderInstructions['orderType'];
   timeInForce?: TimeInForce;
   limitPrice?: number;
   stopPrice?: number;

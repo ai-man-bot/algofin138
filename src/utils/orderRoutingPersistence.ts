@@ -5,6 +5,18 @@ function normalizeText(value: unknown) {
   return String(value ?? '').trim();
 }
 
+function normalizeOrderType(value: unknown): NonNullable<StrategySignal['orderType']> {
+  const type = normalizeText(value).toLowerCase() || 'market';
+  if (type === 'market' || type === 'limit' || type === 'stop' || type === 'stop_limit') return type;
+  throw new Error('Unsupported signal order type');
+}
+
+function normalizeTimeInForce(value: unknown): NonNullable<StrategySignal['timeInForce']> {
+  const tif = normalizeText(value).toLowerCase() || 'day';
+  if (tif === 'day' || tif === 'gtc' || tif === 'gtd' || tif === 'ioc' || tif === 'fok') return tif;
+  throw new Error('Unsupported signal time in force');
+}
+
 function normalizeSymbol(value: unknown) {
   const symbol = normalizeText(value).toUpperCase();
   if (!symbol) {
@@ -75,8 +87,8 @@ export function buildStrategyLabSignalFromPayload(
     assetClass: inferAssetClass(symbol, payload.asset_class ?? payload.assetClass),
     side,
     quantity,
-    orderType: normalizeText(payload.order_type ?? payload.orderType).toLowerCase() || 'market',
-    timeInForce: normalizeText(payload.time_in_force ?? payload.timeInForce).toLowerCase() || 'day',
+    orderType: normalizeOrderType(payload.order_type ?? payload.orderType),
+    timeInForce: normalizeTimeInForce(payload.time_in_force ?? payload.timeInForce),
     limitPrice:
       payload.limit_price != null || payload.limitPrice != null
         ? normalizeNumber(payload.limit_price ?? payload.limitPrice, 'limit price')

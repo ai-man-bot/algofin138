@@ -9,7 +9,8 @@ import {
   buildWebhookEventStatusUpdate,
 } from "../../../src/utils/orderRoutingPersistence.ts";
 import {
-  isRootWebhookIngressPath,
+  extractLegacyTradingViewStrategyId,
+  isWebhookIngressPath,
   normalizeBrokerConnectPayload,
 } from "../../../src/utils/webhookRouteMatching.ts";
 import {
@@ -22,11 +23,16 @@ import {
   buildLegacyStrategyWebhookUrl,
   buildLegacyTradePrefix,
 } from "../../../src/utils/legacyStrategyRoutes.ts";
+import { buildAlpacaOrderFromWebhookPayload } from "../../../src/utils/webhookAlpacaOrders.ts";
+import { decodeWebhookBody, parseOptionMessage, isOptionMessagePayload } from "../../../src/utils/optionWebhook.ts";
+import { runOptionPlanBatch } from "./option_plan_worker.ts";
+import { storeOptionPlan, OptionPlanConflict } from './option_plan_store.ts';
+import { handleOptionTicketRoute } from './option_ticket_routes.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-webhook-secret",
+    "authorization, x-client-info, apikey, content-type, x-webhook-secret, x-webhook-id",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
 };
 
@@ -177,6 +183,29 @@ async function proxyAlpacaJson(url: string, headers: Record<string, string>) {
   };
 }
 
+async function submitAlpacaOrder(
+  broker: any,
+  headers: Record<string, string>,
+  order: Record<string, any>,
+) {
+  const response = await fetch(`${getBrokerBaseUrl(broker)}/v2/orders`, {
+    method: "POST",
+    headers: {
+      ...headers,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(order),
+  });
+  const data = await response.json().catch(() => null);
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    request: order,
+    response: data,
+  };
+}
+
 async function getKvValue(supabase: any, key: string) {
   const { data, error } = await supabase
     .from("kv_store_f118884a")
@@ -219,6 +248,114 @@ async function listKvPrefix(supabase: any, prefix: string) {
 
 async function readJson(req: Request) {
   return req.json().catch(() => ({}));
+}
+
+function collectRequestHeaders(req: Request) {
+  const allowedHeaders = [
+    "content-type",
+    "user-agent",
+    "x-client-info",
+    "x-forwarded-for",
+    "x-real-ip",
+    "x-webhook-secret",
+  ];
+
+  return allowedHeaders.reduce((headers: Record<string, string>, name) => {
+    const value = req.headers.get(name);
+    if (value) headers[name] = name === "x-webhook-secret" ? "[provided]" : value;
+    return headers;
+  }, {});
+}
+
+async function insertWebhookOrderRequestLog(
+  supabase: any,
+  input: {
+    req: Request;
+    url: URL;
+    token?: string | null;
+    route?: any;
+    payload?: unknown;
+    status: string;
+    httpStatus: number;
+    error?: string | null;
+    response?: unknown;
+  },
+) {
+  const legacyStrategyId = extractLegacyTradingViewStrategyId(input.url.pathname);
+  const { data, error } = await supabase
+    .from("webhook_order_request_logs")
+    .insert({
+      method: input.req.method,
+      path: input.url.pathname,
+      query: Object.fromEntries(input.url.searchParams.entries()),
+      token: input.token ?? null,
+      route_id: input.route?.id ?? null,
+      user_id: input.route?.user_id ?? null,
+      strategy_id: input.route?.strategy_id ?? legacyStrategyId ?? null,
+      broker_account_id: input.route?.broker_account_id ?? null,
+      source: input.payload && typeof input.payload === "object"
+        ? (input.payload as any).source ?? null
+        : null,
+      symbol: input.payload && typeof input.payload === "object"
+        ? (input.payload as any).symbol ?? null
+        : null,
+      side: input.payload && typeof input.payload === "object"
+        ? (input.payload as any).side ?? (input.payload as any).action ?? null
+        : null,
+      status: input.status,
+      http_status: input.httpStatus,
+      error_message: input.error ?? null,
+      request_headers: collectRequestHeaders(input.req),
+      request_payload: input.payload ?? {},
+      response_payload: input.response ?? {},
+    })
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    console.error("webhook_order_request_logs insert failed:", error);
+    return null;
+  }
+
+  return data ?? null;
+}
+
+async function updateWebhookOrderRequestLog(
+  supabase: any,
+  logId: string | null | undefined,
+  input: {
+    status: string;
+    httpStatus: number;
+    error?: string | null;
+    response?: unknown;
+    route?: any;
+  },
+) {
+  if (!logId) return;
+
+  const updates: Record<string, any> = {
+    status: input.status,
+    http_status: input.httpStatus,
+    error_message: input.error ?? null,
+    response_payload: input.response ?? {},
+    updated_at: new Date().toISOString(),
+  };
+
+  if (input.route) {
+    updates.route_id = input.route?.id ?? null;
+    updates.user_id = input.route?.user_id ?? null;
+    updates.strategy_id = input.route?.strategy_id ?? null;
+    updates.broker_account_id = input.route?.broker_account_id ?? null;
+  }
+
+  const { error } = await supabase
+    .from("webhook_order_request_logs")
+    .update(updates)
+    .eq("id", logId);
+
+  if (error) {
+    console.error("webhook_order_request_logs update failed:", error);
+  }
 }
 
 async function getPrimaryBrokerAccount(supabase: any, userId: string, brokerAccountId?: string | null) {
@@ -790,6 +927,237 @@ async function handleLegacyStrategyRoutes(req: Request, url: URL, supabase: any,
   return null;
 }
 
+async function findLegacyTradingViewStrategy(supabase: any, strategyId: string, token: string) {
+  const { rows, error } = await listKvPrefix(supabase, "user:");
+  if (error) return { strategy: null, userId: null, error };
+
+  const strategyRow = rows.find((row: any) => {
+    const key = String(row?.key ?? "");
+    const value = row?.value ?? {};
+    return key.endsWith(`:strategy:${strategyId}`) && value?.webhookToken === token;
+  });
+
+  if (!strategyRow) {
+    return { strategy: null, userId: null, error: null };
+  }
+
+  const keyMatch = String(strategyRow.key ?? "").match(/^user:(.+):strategy:/);
+  return {
+    strategy: strategyRow.value ?? null,
+    userId: keyMatch?.[1] ?? strategyRow.value?.userId ?? null,
+    error: null,
+  };
+}
+
+async function persistLegacyTradingViewTrade(
+  supabase: any,
+  userId: string,
+  strategyId: string,
+  payload: Record<string, any>,
+  brokerResult?: {
+    broker?: any;
+    alpaca?: any;
+    order?: Record<string, any>;
+  },
+) {
+  const tradeId = crypto.randomUUID();
+  const createdAt = new Date().toISOString();
+  const alpacaResponse = brokerResult?.alpaca?.response ?? null;
+  const trade = {
+    id: tradeId,
+    strategyId,
+    symbol: payload.symbol ?? null,
+    side: payload.side ?? payload.action ?? null,
+    qty: payload.quantity ?? payload.qty ?? null,
+    type: brokerResult?.order?.type ?? payload.order_type ?? payload.orderType ?? payload.type ?? "market",
+    limitPrice: brokerResult?.order?.limit_price ?? payload.limit_price ?? payload.limitPrice ?? null,
+    status: brokerResult?.alpaca
+      ? (brokerResult.alpaca.ok ? (alpacaResponse?.status ?? "submitted") : "rejected")
+      : "received",
+    source: payload.source ?? "tradingview",
+    submittedAt: createdAt,
+    filledAt: alpacaResponse?.filled_at ?? null,
+    broker: brokerResult?.alpaca ? "alpaca" : null,
+    brokerId: brokerResult?.broker?.id ?? null,
+    brokerAccountId: brokerResult?.broker?.account_id ?? brokerResult?.broker?.accountId ?? null,
+    brokerOrderId: alpacaResponse?.id ?? null,
+    brokerResponse: alpacaResponse,
+    brokerRequest: brokerResult?.alpaca?.request ?? null,
+    rawPayload: payload,
+  };
+
+  const error = await setKvValue(supabase, `${buildLegacyTradePrefix(userId)}${tradeId}`, trade);
+  return { trade, error };
+}
+
+function runWebhookBackgroundTask(task: () => Promise<void>) {
+  const promise = task().catch((error) => {
+    console.error("webhook background processing failed:", error);
+  });
+  const edgeRuntime = (globalThis as any).EdgeRuntime;
+  if (edgeRuntime?.waitUntil) {
+    edgeRuntime.waitUntil(promise);
+  } else {
+    void promise;
+  }
+}
+
+async function receiveOptionMessage(req: Request, supabase: any, payload: any, token: string, legacyStrategyId: string | null) {
+  try {
+    let userId: string;
+    let brokerId: string | null = null;
+    let strategyId: string | null = legacyStrategyId;
+    let scope: string;
+    if (legacyStrategyId) {
+      const legacy = await findLegacyTradingViewStrategy(supabase, legacyStrategyId, token);
+      if (legacy.error) return jsonResponse({ error: 'Strategy lookup failed' }, 500);
+      if (!legacy.strategy || !legacy.userId) return jsonResponse({ error: 'No active strategy found' }, 404);
+      userId = legacy.userId;
+      scope = `legacy:${userId}:${legacyStrategyId}`;
+    } else {
+      const { data: route, error } = await supabase.from('webhook_routes').select('*').eq('token', token).eq('status', 'active').maybeSingle();
+      if (error) return jsonResponse({ error: 'Route lookup failed' }, 500);
+      if (!route?.user_id) return jsonResponse({ error: 'No active route found' }, 404);
+      userId = route.user_id;
+      brokerId = route.broker_account_id;
+      strategyId = route.strategy_id;
+      scope = `route:${route.id}`;
+    }
+    // No order can be accepted until the persistent worker has been configured.
+    if (!Deno.env.get('OPTION_WORKER_SECRET')) return jsonResponse({ error: 'Option worker is not configured' }, 503);
+    const ready = await supabase.rpc('option_worker_ready', {
+      expected_url: `${Deno.env.get('SUPABASE_URL')}/functions/v1/webhook-listener/internal/options/reconcile`,
+      expected_secret: Deno.env.get('OPTION_WORKER_SECRET'),
+    });
+    if (ready.error || ready.data !== true) return jsonResponse({ error: 'Option reconciliation schedule is not configured' }, 503);
+    const parsed = parseOptionMessage(payload.message);
+    // A mixed stock/option payload must never silently override either instruction.
+    const conflicting = ['symbol', 'side', 'action', 'qty', 'quantity', 'type', 'order_type', 'orderType',
+      'limit_price', 'limitPrice', 'price', 'time_in_force', 'timeInForce', 'position_intent'];
+    if (conflicting.some(key => payload[key] !== undefined)) return jsonResponse({ error: 'Option messages cannot include separate order fields' }, 400);
+    const connection = await getBrokerAccountAndHeaders(supabase, userId, brokerId);
+    if (connection.error || !connection.broker) return jsonResponse({ error: connection.error || 'Broker not connected' }, 409);
+    const { plan, duplicate } = await storeOptionPlan(supabase, {
+      parsed, userId, brokerId: connection.broker.id, baseUrl: getBrokerBaseUrl(connection.broker), scope,
+      strategyId, message: payload.message, eventId: payload.event_id ?? req.headers.get('x-webhook-id') ?? undefined,
+    });
+    runWebhookBackgroundTask(async () => { await runOptionPlanBatch(supabase, getBrokerAccountAndHeaders, plan.id); });
+    return jsonResponse({ ok: true, duplicate, plan_id: plan.id, status: plan.status, symbol: plan.symbol,
+      message: 'Option plan stored; broker submission and first-target execution are tracked asynchronously.' }, 202);
+  } catch (error: any) {
+    return jsonResponse({ error: error?.message || 'Unable to accept option message' },
+      error instanceof OptionPlanConflict ? 409 : /Expected|Invalid expiration|Strike and entry|Option message|event_id/.test(error?.message || '') ? 400 : 500);
+  }
+}
+
+async function processLegacyTradingViewOrder(input: {
+  supabase: any;
+  requestLogId?: string | null;
+  legacyStrategyId: string;
+  token: string;
+  payload: Record<string, any>;
+  alpacaOrder: Record<string, any>;
+}) {
+  const { supabase, requestLogId, legacyStrategyId, token, payload, alpacaOrder } = input;
+  const legacy = await findLegacyTradingViewStrategy(supabase, legacyStrategyId, token);
+
+  if (legacy.error) {
+    const response = { error: "Legacy strategy lookup failed", details: legacy.error };
+    await updateWebhookOrderRequestLog(supabase, requestLogId, {
+      status: "legacy_lookup_failed",
+      httpStatus: 500,
+      error: response.error,
+      response,
+    });
+    return;
+  }
+
+  if (!legacy.strategy || !legacy.userId) {
+    const response = { error: "No active legacy TradingView strategy found", token, strategyId: legacyStrategyId };
+    await updateWebhookOrderRequestLog(supabase, requestLogId, {
+      status: "legacy_strategy_not_found",
+      httpStatus: 404,
+      error: response.error,
+      response,
+    });
+    return;
+  }
+
+  const route = {
+    user_id: legacy.userId,
+    strategy_id: legacyStrategyId,
+  };
+
+  const { broker, headers, error: brokerError } = await getBrokerAccountAndHeaders(supabase, legacy.userId);
+  if (brokerError || !headers) {
+    const { trade, error } = await persistLegacyTradingViewTrade(supabase, legacy.userId, legacyStrategyId, payload);
+    const response = {
+      error: brokerError || "Alpaca broker credentials not found",
+      matched_strategy: {
+        id: legacyStrategyId,
+        name: legacy.strategy.name ?? null,
+        user_id: legacy.userId,
+      },
+      trade,
+    };
+    await updateWebhookOrderRequestLog(supabase, requestLogId, {
+      status: error ? "legacy_trade_log_failed" : "broker_credentials_missing",
+      httpStatus: error ? 500 : 404,
+      error: error ? "Failed to log legacy TradingView trade" : response.error,
+      response: error ? { ...response, details: error } : response,
+      route,
+    });
+    return;
+  }
+
+  const alpaca = await submitAlpacaOrder(broker, headers, alpacaOrder);
+  const { trade, error } = await persistLegacyTradingViewTrade(
+    supabase,
+    legacy.userId,
+    legacyStrategyId,
+    payload,
+    { broker, alpaca, order: alpacaOrder },
+  );
+
+  if (error) {
+    const response = { error: "Failed to log legacy TradingView trade", details: error };
+    await updateWebhookOrderRequestLog(supabase, requestLogId, {
+      status: "legacy_trade_log_failed",
+      httpStatus: 500,
+      error: response.error,
+      response,
+      route,
+    });
+    return;
+  }
+
+  const response = {
+    ok: alpaca.ok,
+    matched_strategy: {
+      id: legacyStrategyId,
+      name: legacy.strategy.name ?? null,
+      user_id: legacy.userId,
+    },
+    trade,
+    alpaca: {
+      ok: alpaca.ok,
+      status: alpaca.status,
+      request: alpaca.request,
+      response: alpaca.response,
+    },
+    message: alpaca.ok
+      ? "TradingView webhook received and submitted to Alpaca."
+      : "TradingView webhook received, but Alpaca rejected the order.",
+  };
+  await updateWebhookOrderRequestLog(supabase, requestLogId, {
+    status: alpaca.ok ? "submitted" : "alpaca_rejected",
+    httpStatus: alpaca.ok ? 200 : 502,
+    error: alpaca.ok ? null : alpaca.response?.message ?? alpaca.response?.error ?? "Alpaca order rejected",
+    response,
+    route,
+  });
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -798,9 +1166,39 @@ Deno.serve(async (req: Request) => {
   const url = new URL(req.url);
   const path = url.pathname;
 
+  if (path.endsWith('/webhook-listener/internal/options/reconcile')) {
+    const secret = Deno.env.get('OPTION_WORKER_SECRET');
+    if (!secret || req.headers.get('x-option-worker-secret') !== secret) return jsonResponse({ error: 'Unauthorized' }, 401);
+    if (req.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
+    const { supabase, error } = await getSupabaseClient();
+    if (!supabase) return jsonResponse({ error }, 503);
+    try { return jsonResponse({ results: await runOptionPlanBatch(supabase, getBrokerAccountAndHeaders) }); }
+    catch (error: any) { return jsonResponse({ error: error.message }, 500); }
+  }
+
   const strategyLabResponse = await handleStrategyLabRoutes(req, path, jsonResponse);
   if (strategyLabResponse) {
     return strategyLabResponse;
+  }
+
+  if (path.endsWith('/option-plans') || path.endsWith('/option-plans/preview')) {
+    const { supabase, error } = await getSupabaseClient();
+    if (!supabase) return jsonResponse({ error }, 503);
+    const { userId, error: authError } = await getAuthenticatedUserId(req, supabase);
+    if (!userId || authError) return jsonResponse({ error: authError || 'Unauthorized' }, 401);
+    const result = await handleOptionTicketRoute(req, url, {
+      supabase, userId, getBroker: getBrokerAccountAndHeaders,
+      workerReady: async () => {
+        if (!Deno.env.get('OPTION_WORKER_SECRET')) return false;
+        const result = await supabase.rpc('option_worker_ready', {
+          expected_url: `${Deno.env.get('SUPABASE_URL')}/functions/v1/webhook-listener/internal/options/reconcile`,
+          expected_secret: Deno.env.get('OPTION_WORKER_SECRET'),
+        });
+        return !result.error && result.data === true;
+      },
+      enqueue: (id) => runWebhookBackgroundTask(async () => { await runOptionPlanBatch(supabase, getBrokerAccountAndHeaders, id); }),
+    });
+    return jsonResponse(result.body, result.status);
   }
 
   if (
@@ -892,19 +1290,20 @@ Deno.serve(async (req: Request) => {
     }
 
     if (path.endsWith("/alpaca/options/contracts") && req.method === "GET") {
-      const { headers, error: credentialsError } = await getAlpacaHeaders(supabase, userId);
+      const { broker, headers, error: credentialsError } = await getBrokerAccountAndHeaders(supabase, userId, url.searchParams.get('brokerId'));
 
       if (credentialsError || !headers) {
         return jsonResponse({ error: credentialsError }, 404);
       }
 
       const params = new URLSearchParams(url.search);
+      params.delete('brokerId');
       if (!params.get("underlying_symbols")) {
         return jsonResponse({ error: "Missing underlying_symbols" }, 400);
       }
 
       const alpaca = await proxyAlpacaJson(
-        `https://paper-api.alpaca.markets/v2/options/contracts?${params.toString()}`,
+        `${getBrokerBaseUrl(broker)}/v2/options/contracts?${params.toString()}`,
         headers,
       );
 
@@ -913,7 +1312,7 @@ Deno.serve(async (req: Request) => {
 
     const optionChainMatch = path.match(/\/alpaca\/options\/chain\/([^/]+)$/);
     if (optionChainMatch && req.method === "GET") {
-      const { headers, error: credentialsError } = await getAlpacaHeaders(supabase, userId);
+      const { headers, error: credentialsError } = await getBrokerAccountAndHeaders(supabase, userId, url.searchParams.get('brokerId'));
 
       if (credentialsError || !headers) {
         return jsonResponse({ error: credentialsError }, 404);
@@ -921,6 +1320,7 @@ Deno.serve(async (req: Request) => {
 
       const underlyingSymbol = optionChainMatch[1].toUpperCase();
       const params = new URLSearchParams(url.search);
+      params.delete('brokerId');
       if (!params.get("feed")) params.set("feed", "indicative");
       if (!params.get("limit")) params.set("limit", "1000");
 
@@ -1087,18 +1487,58 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: "Method not allowed" }, 405);
   }
 
-  if (!isRootWebhookIngressPath(path)) {
-    return jsonResponse({ error: "Route not found" }, 404);
-  }
+  const { supabase, error: clientError } = await getSupabaseClient();
 
-  const tokenFromUrl = url.searchParams.get("token");
+  if (clientError || !supabase) {
+    return jsonResponse({ error: clientError }, 500);
+  }
 
   let payload: any = {};
 
   try {
-    payload = await req.json();
+    payload = decodeWebhookBody(await req.text(), req.headers.get('content-type') || '');
   } catch {
-    return jsonResponse({ error: "Invalid JSON body" }, 400);
+    const response = { error: "Invalid webhook body: expected JSON object or option text" };
+    await insertWebhookOrderRequestLog(supabase, {
+      req,
+      url,
+      payload,
+      status: "invalid_json",
+      httpStatus: 400,
+      error: response.error,
+      response,
+    });
+    return jsonResponse(response, 400);
+  }
+
+  const tokenFromUrl = url.searchParams.get("token");
+  const legacyStrategyId = extractLegacyTradingViewStrategyId(path);
+  const token =
+    tokenFromUrl ??
+    payload?.route_token ??
+    payload?.webhook_token ??
+    payload?.route_id ??
+    payload?.token ??
+    null;
+
+  let requestLog = await insertWebhookOrderRequestLog(supabase, {
+    req,
+    url,
+    token,
+    payload,
+    status: "received",
+    httpStatus: 202,
+  });
+
+  if (!isWebhookIngressPath(path)) {
+    const response = { error: "Route not found", path };
+    await updateWebhookOrderRequestLog(supabase, requestLog?.id, {
+      status: "route_not_found",
+      httpStatus: 404,
+      error: response.error,
+      response,
+    });
+    return jsonResponse(response, 404);
   }
 
   const configuredSecret = Deno.env.get("TRADINGVIEW_WEBHOOK_SECRET");
@@ -1111,33 +1551,84 @@ Deno.serve(async (req: Request) => {
       null;
 
     if (providedSecret && providedSecret !== configuredSecret) {
-      return jsonResponse({ error: "Invalid webhook secret" }, 401);
+      const response = { error: "Invalid webhook secret" };
+      await updateWebhookOrderRequestLog(supabase, requestLog?.id, {
+        status: "invalid_secret",
+        httpStatus: 401,
+        error: response.error,
+        response,
+      });
+      return jsonResponse(response, 401);
     }
   }
 
-  const token =
-    tokenFromUrl ??
-    payload?.route_token ??
-    payload?.webhook_token ??
-    payload?.route_id ??
-    payload?.token ??
-    null;
-
   if (!token) {
-    return jsonResponse(
-      {
-        error: "Missing route token",
-        expected:
-          "Use ?token=test-route-001 in URL or include route_token in JSON body",
-      },
-      400,
-    );
+    const response = {
+      error: "Missing route token",
+      expected:
+        "Use ?token=test-route-001 in URL or include route_token in JSON body",
+    };
+    await updateWebhookOrderRequestLog(supabase, requestLog?.id, {
+      status: "missing_token",
+      httpStatus: 400,
+      error: response.error,
+      response,
+    });
+    return jsonResponse(response, 400);
   }
 
-  const { supabase, error: clientError } = await getSupabaseClient();
+  if (isOptionMessagePayload(payload)) {
+    if (configuredSecret && req.headers.get('x-webhook-secret') !== configuredSecret && payload.secret !== configuredSecret) {
+      return jsonResponse({ error: 'Missing or invalid webhook secret' }, 401);
+    }
+    const response = await receiveOptionMessage(req, supabase, payload, token, legacyStrategyId);
+    const result = await response.clone().json();
+    await updateWebhookOrderRequestLog(supabase, requestLog?.id, {
+      status: response.ok ? 'option_plan_queued' : 'option_plan_rejected', httpStatus: response.status,
+      response: result, error: result.error ?? null,
+    });
+    return response;
+  }
 
-  if (clientError || !supabase) {
-    return jsonResponse({ error: clientError }, 500);
+  if (legacyStrategyId) {
+    let alpacaOrder: Record<string, any>;
+    try {
+      alpacaOrder = buildAlpacaOrderFromWebhookPayload(payload, {
+        clientOrderId: `tv-${crypto.randomUUID()}`,
+      });
+    } catch (orderError: any) {
+      const response = { error: orderError?.message || "Invalid webhook order payload" };
+      await updateWebhookOrderRequestLog(supabase, requestLog?.id, {
+        status: "invalid_order_payload",
+        httpStatus: 400,
+        error: response.error,
+        response,
+      });
+      return jsonResponse(response, 400);
+    }
+
+    const response = {
+      ok: true,
+      status: "queued",
+      strategyId: legacyStrategyId,
+      message: "TradingView webhook received and queued for Alpaca submission.",
+    };
+    await updateWebhookOrderRequestLog(supabase, requestLog?.id, {
+      status: "queued",
+      httpStatus: 202,
+      response,
+    });
+    runWebhookBackgroundTask(() =>
+      processLegacyTradingViewOrder({
+        supabase,
+        requestLogId: requestLog?.id,
+        legacyStrategyId,
+        token,
+        payload,
+        alpacaOrder,
+      })
+    );
+    return jsonResponse(response, 202);
   }
 
   const { data: route, error: routeError } = await supabase
@@ -1148,26 +1639,41 @@ Deno.serve(async (req: Request) => {
     .maybeSingle();
 
   if (routeError) {
-    return jsonResponse(
-      {
-        error: "webhook_routes lookup failed",
-        details: routeError.message,
-        hint: routeError.hint,
-        code: routeError.code,
-      },
-      500,
-    );
+    const response = {
+      error: "webhook_routes lookup failed",
+      details: routeError.message,
+      hint: routeError.hint,
+      code: routeError.code,
+    };
+    await updateWebhookOrderRequestLog(supabase, requestLog?.id, {
+      status: "route_lookup_failed",
+      httpStatus: 500,
+      error: response.error,
+      response,
+    });
+    return jsonResponse(response, 500);
   }
 
   if (!route) {
-    return jsonResponse(
-      {
-        error: "No active webhook route found",
-        token,
-      },
-      404,
-    );
+    const response = {
+      error: "No active webhook route found",
+      token,
+    };
+    await updateWebhookOrderRequestLog(supabase, requestLog?.id, {
+      status: "route_not_active",
+      httpStatus: 404,
+      error: response.error,
+      response,
+    });
+    return jsonResponse(response, 404);
   }
+
+  await updateWebhookOrderRequestLog(supabase, requestLog?.id, {
+    status: "route_matched",
+    httpStatus: 202,
+    route,
+    response: { route_id: route.id },
+  });
 
   const { error: eventInsertError } = await supabase
     .from("webhook_events")
@@ -1276,7 +1782,7 @@ Deno.serve(async (req: Request) => {
         }
       }
 
-      return jsonResponse({
+      const response = {
         ok: true,
         matched_route: route,
         routing: {
@@ -1289,7 +1795,14 @@ Deno.serve(async (req: Request) => {
         message: routed.riskDecision.status === "block"
           ? "Webhook received and blocked by risk controls."
           : "Webhook received and routed through OMS.",
+      };
+      await updateWebhookOrderRequestLog(supabase, requestLog?.id, {
+        status: routed.riskDecision.status === "block" ? "blocked" : "accepted",
+        httpStatus: 200,
+        response,
+        route,
       });
+      return jsonResponse(response);
     } catch (routingError: any) {
       if (insertedEvent?.id) {
         const { error: eventUpdateError } = await supabase
@@ -1305,13 +1818,27 @@ Deno.serve(async (req: Request) => {
         }
       }
 
+      await updateWebhookOrderRequestLog(supabase, requestLog?.id, {
+        status: "routing_failed",
+        httpStatus: 200,
+        error: routingError?.message || "Routing failed",
+        response: { warning: routingError?.message || "Routing failed" },
+        route,
+      });
       console.warn("Webhook routing skipped or failed:", routingError?.message || routingError);
     }
   }
 
-  return jsonResponse({
+  const response = {
     ok: true,
     matched_route: route,
     message: "Webhook received successfully. Broker execution not added yet.",
+  };
+  await updateWebhookOrderRequestLog(supabase, requestLog?.id, {
+    status: "accepted",
+    httpStatus: 200,
+    response,
+    route,
   });
+  return jsonResponse(response);
 });

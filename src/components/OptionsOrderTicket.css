@@ -1,0 +1,30 @@
+.option-ticket { color: #e2e8f0; display: grid; gap: 24px; min-width: 0; }
+.option-ticket-panel { padding: 24px; border: 1px solid #334155; border-radius: 14px; background: #0b1324; min-width: 0; }
+.option-ticket h3 { font-size: 19px; font-weight: 600; line-height: 1.4; }
+.option-ticket-field { display: block; width: 100%; padding: 11px 13px; margin-top: 8px; border: 1px solid #475569; border-radius: 8px; background: #121d31; color: #f1f5f9; font-size: 14px; }
+.option-ticket textarea { min-height: 116px; resize: vertical; }
+.option-ticket-field:focus-visible, .option-ticket button:focus-visible, .option-ticket input:focus-visible { outline: 2px solid #93c5fd; outline-offset: 3px; }
+.option-ticket-button { display: inline-block; border: 0; border-radius: 8px; padding: 10px 18px; background: #3b6ef5; color: white; font-size: 14px; font-weight: 600; cursor: pointer; }
+.option-ticket-button:hover:not(:disabled) { background: #2959d8; }
+.option-ticket button:disabled, .option-ticket-field:disabled, .option-ticket fieldset:disabled { opacity: .65; cursor: not-allowed; }
+.option-ticket fieldset { border: 0; margin: 20px 0 16px; padding: 0; min-width: 0; }
+.option-ticket [aria-label="Order entry method"] { display: flex; gap: 8px; margin-bottom: 20px; }
+.option-ticket [aria-label="Order entry method"] button { padding: 9px 14px; border-radius: 8px; border: 1px solid #475569; font-size: 14px; }
+.option-ticket [aria-pressed="true"] { background: #213965; color: #bfdbfe; border-color: #60a5fa !important; }
+.option-ticket .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.option-ticket dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin-top: 20px; }
+.option-ticket dt { color: #94a3b8; font-size: 12px; margin-bottom: 6px; }
+.option-ticket dd { font-size: 14px; }
+.option-ticket .flex { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.option-ticket .justify-between { justify-content: space-between; }
+.option-ticket p { line-height: 1.65; }
+.option-ticket .max-h-72 { max-height: 288px; overflow: auto; }
+.option-ticket table { width: 100%; min-width: 570px; border-collapse: collapse; }
+.option-ticket th, .option-ticket td { padding: 12px; border-bottom: 1px solid #29364b; }
+.option-ticket li { padding: 16px; border: 1px solid #334155; border-radius: 9px; margin-top: 12px; }
+.option-ticket [role="alert"] { padding: 12px; background: #3d1d2b; border-radius: 8px; }
+@media (max-width: 640px) {
+  .option-ticket-panel { padding: 16px; }
+  .option-ticket .grid, .option-ticket dl { grid-template-columns: 1fr; }
+  .option-ticket [aria-label="Order entry method"] { flex-wrap: wrap; }
+}

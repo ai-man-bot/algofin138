@@ -34,7 +34,7 @@ export const operationsPanels: OperationsPanelDefinition[] = [
     id: 'options',
     label: 'Options',
     title: 'Options Order Review',
-    description: 'Stage single-leg and vertical-spread orders before routing.',
+    description: 'Parse option messages or select a contract, review limit prices, and submit an entry with its first target.',
   },
   {
     id: 'automation',

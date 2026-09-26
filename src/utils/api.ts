@@ -145,7 +145,7 @@ async function requestJson(path: string, options: RequestInit = {}) {
       if (authErrorCallback) authErrorCallback();
     }
 
-    throw new Error(data?.error || data?.message || `API error ${response.status}`);
+    throw Object.assign(new Error(data?.error || data?.message || `API error ${response.status}`), { status: response.status });
   }
 
   return data;
@@ -702,6 +702,12 @@ export const platformOrdersAPI = {
       method: 'POST',
       body: JSON.stringify({ updates }),
     }, ['/trades', '/dashboard', '/analytics', '/alpaca']),
+};
+
+export const optionPlansAPI = {
+  preview: (payload: any) => apiRequest('/option-plans/preview', { method: 'POST', body: JSON.stringify(payload) }),
+  submit: (payload: any) => mutate('/option-plans', { method: 'POST', body: JSON.stringify(payload) }, ['/option-plans', '/alpaca']),
+  list: (brokerId: string) => apiRequest(`/option-plans?brokerId=${encodeURIComponent(brokerId)}`, { method: 'GET' }),
 };
 
 /* =========================

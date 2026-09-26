@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import {
+  extractLegacyTradingViewStrategyId,
+  isWebhookIngressPath,
   isRootWebhookIngressPath,
   normalizeBrokerConnectPayload,
 } from '../src/utils/webhookRouteMatching.ts';
@@ -8,6 +10,15 @@ assert.equal(isRootWebhookIngressPath('/functions/v1/webhook-listener'), true);
 assert.equal(isRootWebhookIngressPath('/functions/v1/webhook-listener/'), true);
 assert.equal(isRootWebhookIngressPath('/functions/v1/webhook-listener/brokers'), false);
 assert.equal(isRootWebhookIngressPath('/functions/v1/webhook-listener/strategy-lab/strategies'), false);
+assert.equal(isWebhookIngressPath('/functions/v1/webhook-listener'), true);
+assert.equal(isWebhookIngressPath('/functions/v1/webhook-listener/tradingview-webhook/strategy-1'), true);
+assert.equal(isWebhookIngressPath('/functions/v1/webhook-listener/tradingview-webhook/strategy-1/'), true);
+assert.equal(isWebhookIngressPath('/functions/v1/webhook-listener/brokers'), false);
+assert.equal(
+  extractLegacyTradingViewStrategyId('/functions/v1/webhook-listener/tradingview-webhook/strategy-1'),
+  'strategy-1',
+);
+assert.equal(extractLegacyTradingViewStrategyId('/functions/v1/webhook-listener'), null);
 
 const normalized = normalizeBrokerConnectPayload({
   broker_type: 'alpaca',

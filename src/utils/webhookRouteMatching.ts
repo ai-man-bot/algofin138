@@ -16,6 +16,15 @@ export function isRootWebhookIngressPath(path: string) {
   return cleanPath(path).endsWith('/webhook-listener');
 }
 
+export function extractLegacyTradingViewStrategyId(path: string) {
+  const match = cleanPath(path).match(/\/webhook-listener\/tradingview-webhook\/([^/]+)$/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+export function isWebhookIngressPath(path: string) {
+  return isRootWebhookIngressPath(path) || extractLegacyTradingViewStrategyId(path) !== null;
+}
+
 export function normalizeBrokerConnectPayload(payload: any) {
   const brokerType = String(
     payload?.broker_type ?? payload?.brokerType ?? payload?.brokerId ?? payload?.id ?? '',

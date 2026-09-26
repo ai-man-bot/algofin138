@@ -32,6 +32,12 @@ assert.equal(signal.marketPrice, 410.5);
 assert.equal(signal.signalSource, 'strategylab_pinescript');
 assert.equal(signal.metadata?.routeToken, 'route-123');
 
+for (const invalid of [{ order_type: 'unsupported' }, { time_in_force: 'forever' }]) {
+  assert.throws(() => buildStrategyLabSignalFromPayload(
+    { symbol: 'AAPL', side: 'buy', qty: 1, ...invalid }, { fallbackSource: 'webhook' },
+  ), /Unsupported signal/);
+}
+
 assert.throws(
   () =>
     buildStrategyLabSignalFromPayload(

@@ -331,7 +331,7 @@ export function WebhooksPage() {
 
                 <div className="ml-4 flex gap-2">
                   <button
-                    onClick={() => loadWebhooks()}
+                    onClick={() => loadScreen()}
                     className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-300"
                   >
                     <RefreshCw className="h-5 w-5" />
@@ -357,7 +357,7 @@ export function WebhooksPage() {
             <p className="text-sm text-slate-400">Webhook activity log</p>
           </div>
           <button
-            onClick={loadWebhooks}
+            onClick={loadScreen}
             className="flex items-center gap-2 rounded-lg bg-slate-800 px-4 py-2 text-sm transition-colors hover:bg-slate-700"
           >
             <RefreshCw className="h-4 w-4" />
