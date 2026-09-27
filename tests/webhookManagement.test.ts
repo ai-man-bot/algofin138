@@ -29,12 +29,14 @@ const db = { from(table: string) {
     let rows = (tables[table] || []).filter(row => filters.every(([key, value]) => row[key] === value));
     if (mode === 'insert') { writes++; tables[table].push(values); rows = [values]; }
     if (mode === 'update') { writes++; rows.forEach(row => Object.assign(row, values)); }
+    if (mode === 'delete') { writes++; tables[table] = tables[table].filter(row => !rows.includes(row)); }
     return { data: single ? rows[0] || null : rows.slice(0, count), error: null };
   };
   const q: any = {
     select() { return q; }, eq(key: string, value: any) { filters.push([key, value]); return q; }, order() { return q; },
     limit(n: number) { count = n; return q; }, maybeSingle() { single = true; return q; }, single() { single = true; return q; },
     insert(row: any) { mode = 'insert'; values = row; return q; }, update(row: any) { mode = 'update'; values = row; return q; },
+    delete() { mode = 'delete'; return q; },
     then(resolve: any, reject: any) { return Promise.resolve().then(run).then(resolve, reject); },
   };
   return q;
@@ -89,8 +91,14 @@ assert.equal((await request('', 'POST', input)).status,201);
 assert.equal(tables.webhook_routes.at(-1).user_id,'alice');
 assert.equal((await request(`/${owned}`, 'PUT', {...input,name:'Updated'})).status,200);
 assert.equal(tables.webhook_routes[0].token,'keep-private'); assert.equal(tables.webhook_routes[0].strategy_id,'existing-strategy');
-assert.equal((await request(`/${owned}`, 'DELETE')).status,200); assert.equal(tables.webhook_routes[0].status,'inactive');
+assert.equal((await request(`/${owned}`, 'PUT', {...input,status:'inactive'})).status,200); assert.equal(tables.webhook_routes[0].status,'inactive');
 assert.equal(tables.option_trade_plans.length,beforePlans,'deactivation preserves existing plans');
 assert.equal((await request(`/${owned}/preview`, 'POST', {payload:{symbol:'AAPL',side:'buy',qty:1}})).body.preview_only,true,'inactive routes can preview without enabling signal delivery');
+assert.equal((await request(`/${owned}`, 'DELETE')).status,200);
+assert.ok(!tables.webhook_routes.some(row => row.id === owned));
+assert.ok(tables.webhook_routes.some(row => row.id === foreign));
+assert.equal(tables.option_trade_plans.length,beforePlans,'deletion retains existing plans');
+assert.equal(tables.webhook_order_request_logs.length,2,'deletion retains audit history');
+assert.equal((await request(`/${owned}/preview`, 'POST', {})).status,404);
 failTable='webhook_order_request_logs'; assert.equal((await request('/all/events')).status,500,'database failures must not appear as empty success');
 console.log('webhook management ownership, preview-only, lifecycle and truthful event tests passed');

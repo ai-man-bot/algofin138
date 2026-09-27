@@ -68,9 +68,9 @@ export async function handleWebhookManagement(req: Request, url: URL, deps: {
       }));
     }
     if (req.method === 'DELETE' && route && !action) {
-      const updated = await db.from('webhook_routes').update({ status: 'inactive', updated_at: new Date().toISOString() }).eq('id', id).eq('user_id', userId);
+      const updated = await db.from('webhook_routes').delete().eq('id', id).eq('user_id', userId);
       fail(updated.error);
-      return respond({ ok: true, status: 'inactive' });
+      return respond({ ok: true, deleted: true });
     }
     if (!['POST', 'PUT'].includes(req.method)) return respond({ error: 'Method not allowed' }, 405);
     let body: any;

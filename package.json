@@ -60,7 +60,7 @@
       "scripts": {
             "dev": "vite",
             "build": "vite build",
-            "test": "node --experimental-strip-types tests/run-tests.ts",
+            "test": "node --experimental-strip-types tests/run-tests.ts && node --experimental-strip-types tests/webhookTest.test.ts",
             "supabase:login": "supabase login",
             "supabase:link": "supabase link --project-ref dzboqhobrmzglyuofcyk",
             "supabase:db:push": "supabase db push",
