@@ -1,7 +1,8 @@
 # Deployment and verification
 
 Supabase project: `dzboqhobrmzglyuofcyk`.
-Deployed function: `webhook-listener`, version **37**, ACTIVE (GitHub deployment).
+Deployed function: `webhook-listener`. Management release version **38** verified
+ACTIVE through the GitHub deployment pipeline.
 
 Completed:
 
@@ -75,6 +76,16 @@ released, and the two latest scheduled HTTP responses were 200 without timeouts.
   event output, and database error propagation. Full tests and Deno checks passed.
 
 ## Remaining user-led paper verification
+
+Management release `dd0ccdd` reached Vercel READY and applied migration
+`202609260001`. The scheduled worker continued returning HTTP 200. Read-only
+inspection found existing paper entries for `PLTR261023C00150000` and
+`PURR261218C00020000` accepted with zero fills, no errors, and targets still waiting
+for an entry fill. These orders were not submitted or modified by the release checks.
+
+Inactive routes also support message preview without enabling signal delivery.
+Old routes tied to a removed account are displayed with a connection warning;
+their owner must explicitly choose the intended account in Edit webhook.
 
 The paper market was closed during deployment verification. Per the user's
 instruction, no follow-up has been scheduled. No valid paper or live order was

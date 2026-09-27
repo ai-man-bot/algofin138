@@ -110,7 +110,7 @@ export function WebhooksPage() {
       <div className="flex">
         <button className={button} onClick={async () => { try { await navigator.clipboard.writeText(route.url); setNotice('Webhook URL copied.'); } catch { setError('Clipboard unavailable. Select the webhook URL and copy it manually.'); } }}>Copy URL</button>
         <button className={button} disabled={busy} onClick={() => edit(route)}>Edit webhook</button>
-        <button className={button} disabled={busy || route.status !== 'active' || !!route.connection_error} onClick={() => { setPreviewRoute(route); setEditor(null); setPayload(example); setPreview(null); setError(''); }}>Preview message</button>
+        <button className={button} disabled={busy || !!route.connection_error} onClick={() => { setPreviewRoute(route); setEditor(null); setPayload(example); setPreview(null); setError(''); }}>Preview message</button>
         <button className={button} disabled={busy || route.status !== 'active'} onClick={() => void deactivate(route)}>Deactivate</button>
       </div>
     </section>)}

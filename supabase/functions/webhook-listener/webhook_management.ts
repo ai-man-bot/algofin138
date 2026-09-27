@@ -78,7 +78,7 @@ export async function handleWebhookManagement(req: Request, url: URL, deps: {
     if (!body || typeof body !== 'object' || Array.isArray(body)) return respond({ error: 'Expected an object' }, 400);
 
     if (req.method === 'POST' && action === 'preview' && route) {
-      if (route.status !== 'active') return respond({ error: 'Webhook is inactive' }, 409);
+      // Preview does not deliver a signal, so an inactive route can be validated.
       if (!route.broker_account_id) return respond({ error: 'Select a broker account using Edit webhook' }, 409);
       const connection = await deps.getBroker(db, userId, route.broker_account_id);
       if (connection.error || !connection.broker) return respond({ error: connection.error || 'Broker unavailable' }, 409);

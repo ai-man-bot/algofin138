@@ -91,6 +91,6 @@ assert.equal((await request(`/${owned}`, 'PUT', {...input,name:'Updated'})).stat
 assert.equal(tables.webhook_routes[0].token,'keep-private'); assert.equal(tables.webhook_routes[0].strategy_id,'existing-strategy');
 assert.equal((await request(`/${owned}`, 'DELETE')).status,200); assert.equal(tables.webhook_routes[0].status,'inactive');
 assert.equal(tables.option_trade_plans.length,beforePlans,'deactivation preserves existing plans');
-assert.equal((await request(`/${owned}/preview`, 'POST', {payload:'anything'})).status,409);
+assert.equal((await request(`/${owned}/preview`, 'POST', {payload:{symbol:'AAPL',side:'buy',qty:1}})).body.preview_only,true,'inactive routes can preview without enabling signal delivery');
 failTable='webhook_order_request_logs'; assert.equal((await request('/all/events')).status,500,'database failures must not appear as empty success');
 console.log('webhook management ownership, preview-only, lifecycle and truthful event tests passed');

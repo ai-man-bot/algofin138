@@ -81,7 +81,8 @@ connections can be repaired with Edit webhook, which preserves the URL/token and
 strategy association. Active/inactive status controls new signals only; existing
 plans and broker orders are not canceled by deactivation or account changes.
 
-Preview message accepts raw text or JSON and returns the parsed Alpaca entry and
+Preview message is available on active and inactive connected routes. It accepts
+raw text or JSON and returns the parsed Alpaca entry and
 first-target payloads without placing orders. It does not verify broker acceptance
 or runtime risk checks. Recent events combines owner-scoped request logs and option
 plans; missing fill details remain unknown rather than being inferred from order
