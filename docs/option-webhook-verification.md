@@ -1,7 +1,7 @@
 # Deployment and verification
 
 Supabase project: `dzboqhobrmzglyuofcyk`.
-Deployed function: `webhook-listener`, version **36**, ACTIVE.
+Deployed function: `webhook-listener`, version **37**, ACTIVE (GitHub deployment).
 
 Completed:
 
@@ -56,6 +56,23 @@ released, and the two latest scheduled HTTP responses were 200 without timeouts.
   malformed inputs, and the stock validation path passed against the deployed API.
   Diagnostic plans: `d744da60-d9f1-4c94-a790-35b0a59e76e4` and
   `dcec0f50-4533-4036-aa92-454190ac6835` (impossible contracts, no orders).
+- Feature commit `416033e` published to production at https://algofin138.vercel.app.
+  Vercel reached READY; the corrected Supabase GitHub deployment workflow passed.
+  Backend version 37 is active; cron remains enabled and returns HTTP 200.
+- Signed-in production checks passed for message preview, real Alpaca contract-chain
+  loading/selection, and account-filtered plan history. Both input paths previewed
+  `PLTR261016P00190000`, expiration 2026-10-16, 3 DAY contracts at 6.65 and one GTC
+  target at 7.65. The Submit button was never activated.
+- Webhooks no longer crashes. Follow-up implementation restores owner-scoped route
+  listing, creation, editing, deactivation, and event history. New routes require an
+  explicit connected Alpaca account and paper/live environment confirmation.
+  Existing strategy associations and tokens are preserved during edits.
+- The former Test action is a read-only message preview: raw option text and JSON
+  are validated without storing a plan or submitting any broker order. Errors are
+  visible. Accepted/queued entries are not reported as fills.
+- Management tests cover cross-user isolation, account/environment mismatch,
+  preview-only behavior, deactivation without canceling existing plans, sanitized
+  event output, and database error propagation. Full tests and Deno checks passed.
 
 ## Remaining user-led paper verification
 

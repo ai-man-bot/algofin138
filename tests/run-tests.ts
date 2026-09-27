@@ -77,3 +77,5 @@ assert.equal(typeof advancedMetrics.sortinoRatio, 'number');
 assert.equal(typeof advancedMetrics.dailyVaR, 'number');
 
 console.log('tradeAnalytics tests passed');
+
+import './webhookManagement.test.ts';

@@ -28,6 +28,7 @@ import { decodeWebhookBody, parseOptionMessage, isOptionMessagePayload } from ".
 import { runOptionPlanBatch } from "./option_plan_worker.ts";
 import { storeOptionPlan, OptionPlanConflict } from './option_plan_store.ts';
 import { handleOptionTicketRoute } from './option_ticket_routes.ts';
+import { handleWebhookManagement } from './webhook_management.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1002,18 +1003,20 @@ function runWebhookBackgroundTask(task: () => Promise<void>) {
   }
 }
 
-async function receiveOptionMessage(req: Request, supabase: any, payload: any, token: string, legacyStrategyId: string | null) {
+async function receiveOptionMessage(req: Request, supabase: any, payload: any, token: string, legacyStrategyId: string | null, requestLogId?: string) {
   try {
     let userId: string;
     let brokerId: string | null = null;
     let strategyId: string | null = legacyStrategyId;
     let scope: string;
+    let logRoute: any;
     if (legacyStrategyId) {
       const legacy = await findLegacyTradingViewStrategy(supabase, legacyStrategyId, token);
       if (legacy.error) return jsonResponse({ error: 'Strategy lookup failed' }, 500);
       if (!legacy.strategy || !legacy.userId) return jsonResponse({ error: 'No active strategy found' }, 404);
       userId = legacy.userId;
       scope = `legacy:${userId}:${legacyStrategyId}`;
+      logRoute = { user_id: userId, strategy_id: legacyStrategyId };
     } else {
       const { data: route, error } = await supabase.from('webhook_routes').select('*').eq('token', token).eq('status', 'active').maybeSingle();
       if (error) return jsonResponse({ error: 'Route lookup failed' }, 500);
@@ -1022,7 +1025,9 @@ async function receiveOptionMessage(req: Request, supabase: any, payload: any, t
       brokerId = route.broker_account_id;
       strategyId = route.strategy_id;
       scope = `route:${route.id}`;
+      logRoute = route;
     }
+    await updateWebhookOrderRequestLog(supabase, requestLogId, { status: 'option_route_matched', httpStatus: 202, route: logRoute });
     // No order can be accepted until the persistent worker has been configured.
     if (!Deno.env.get('OPTION_WORKER_SECRET')) return jsonResponse({ error: 'Option worker is not configured' }, 503);
     const ready = await supabase.rpc('option_worker_ready', {
@@ -1179,6 +1184,16 @@ Deno.serve(async (req: Request) => {
   const strategyLabResponse = await handleStrategyLabRoutes(req, path, jsonResponse);
   if (strategyLabResponse) {
     return strategyLabResponse;
+  }
+
+  if (/\/webhooks(?:\/[^/]+(?:\/(?:events|preview))?)?$/.test(path)) {
+    const { supabase, error } = await getSupabaseClient();
+    if (!supabase) return jsonResponse({ error }, 503);
+    const { userId, error: authError } = await getAuthenticatedUserId(req, supabase);
+    if (!userId || authError) return jsonResponse({ error: authError || 'Unauthorized' }, 401);
+    const result = await handleWebhookManagement(req, url, { supabase, userId,
+      baseUrl: `${Deno.env.get('SUPABASE_URL')}/functions/v1/webhook-listener`, getBroker: getBrokerAccountAndHeaders });
+    return jsonResponse(result.body, result.status);
   }
 
   if (path.endsWith('/option-plans') || path.endsWith('/option-plans/preview')) {
@@ -1581,7 +1596,7 @@ Deno.serve(async (req: Request) => {
     if (configuredSecret && req.headers.get('x-webhook-secret') !== configuredSecret && payload.secret !== configuredSecret) {
       return jsonResponse({ error: 'Missing or invalid webhook secret' }, 401);
     }
-    const response = await receiveOptionMessage(req, supabase, payload, token, legacyStrategyId);
+    const response = await receiveOptionMessage(req, supabase, payload, token, legacyStrategyId, requestLog?.id);
     const result = await response.clone().json();
     await updateWebhookOrderRequestLog(supabase, requestLog?.id, {
       status: response.ok ? 'option_plan_queued' : 'option_plan_rejected', httpStatus: response.status,

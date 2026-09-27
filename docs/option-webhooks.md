@@ -74,6 +74,19 @@ rules from Strategy Lab are not applied to this fixed-quantity option flow.
 
 ## Activation
 
+In Webhooks, create a named route and select its connected Alpaca account. A
+strategy is not required for this fixed-quantity option workflow. The generated
+tokenized URL accepts the option messages described above. Existing route account
+connections can be repaired with Edit webhook, which preserves the URL/token and
+strategy association. Active/inactive status controls new signals only; existing
+plans and broker orders are not canceled by deactivation or account changes.
+
+Preview message accepts raw text or JSON and returns the parsed Alpaca entry and
+first-target payloads without placing orders. It does not verify broker acceptance
+or runtime risk checks. Recent events combines owner-scoped request logs and option
+plans; missing fill details remain unknown rather than being inferred from order
+quantity. Option target details remain in Operations.
+
 The Operations options ticket also accepts this message format. Select an Alpaca
 account, paste the message (or select a fetched contract and enter both prices),
 review the resolved contract and account, then submit. Review does not place an
