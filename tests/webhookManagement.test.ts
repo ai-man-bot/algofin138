@@ -94,6 +94,13 @@ assert.equal(tables.webhook_routes[0].token,'keep-private'); assert.equal(tables
 assert.equal((await request(`/${owned}`, 'PUT', {...input,status:'inactive'})).status,200); assert.equal(tables.webhook_routes[0].status,'inactive');
 assert.equal(tables.option_trade_plans.length,beforePlans,'deactivation preserves existing plans');
 assert.equal((await request(`/${owned}/preview`, 'POST', {payload:{symbol:'AAPL',side:'buy',qty:1}})).body.preview_only,true,'inactive routes can preview without enabling signal delivery');
+tables.broker_accounts[0].connected = false;
+tables.webhook_routes[0].status = 'active';
+assert.equal((await request(`/${foreign}`, 'PUT', {status:'inactive'})).status,404);
+assert.equal((await request(`/${owned}`, 'PUT', {status:'inactive'})).status,200);
+assert.equal(tables.webhook_routes[0].status,'inactive','disconnected account can be deactivated');
+assert.equal(tables.webhook_routes[0].broker_account_id,'paper-1');
+assert.equal((await request(`/${owned}`, 'PUT', {...input,status:'active'})).status,409,'reactivation must still validate broker');
 assert.equal((await request(`/${owned}`, 'DELETE')).status,200);
 assert.ok(!tables.webhook_routes.some(row => row.id === owned));
 assert.ok(tables.webhook_routes.some(row => row.id === foreign));

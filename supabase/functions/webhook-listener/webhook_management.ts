@@ -77,6 +77,14 @@ export async function handleWebhookManagement(req: Request, url: URL, deps: {
     try { body = await req.json(); } catch { return respond({ error: 'Invalid JSON' }, 400); }
     if (!body || typeof body !== 'object' || Array.isArray(body)) return respond({ error: 'Expected an object' }, 400);
 
+    // Stopping delivery must remain possible after a broker disconnects.
+    // Only this exact status-only request bypasses account validation.
+    if (req.method === 'PUT' && route && !action && body.status === 'inactive' && Object.keys(body).length === 1) {
+      const updated = await db.from('webhook_routes').update({ status: 'inactive', updated_at: new Date().toISOString() }).eq('id', id).eq('user_id', userId);
+      fail(updated.error);
+      return respond({ ok: true, id, status: 'inactive' });
+    }
+
     if (req.method === 'POST' && action === 'preview' && route) {
       // Preview does not deliver a signal, so an inactive route can be validated.
       if (!route.broker_account_id) return respond({ error: 'Select a broker account using Edit webhook' }, 409);

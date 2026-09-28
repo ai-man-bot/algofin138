@@ -479,16 +479,6 @@ export const webhooksAPI = {
     }, ['/webhooks']),
 };
 
-export const testWebhook = (urlOrPayload: string | any = {}, payload?: any) =>
-  apiRequest('/test-webhook', {
-    method: 'POST',
-    body: JSON.stringify(
-      typeof urlOrPayload === 'string'
-        ? { url: urlOrPayload, payload: payload ?? {} }
-        : urlOrPayload
-    ),
-  });
-
 /* =========================
    NOTIFICATIONS
 ========================= */

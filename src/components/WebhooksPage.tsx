@@ -72,7 +72,7 @@ export function WebhooksPage() {
     if (mutation.current) return;
     if (!window.confirm(`Deactivate ${route.name}? Future signals will be rejected. Existing orders and option plans will continue.`)) return;
     mutation.current = true; setBusy(true); setError('');
-    try { await webhooksAPI.update(route.id, { name: route.name, broker_id: route.broker_id, environment: route.environment, status: 'inactive' }); setNotice('Webhook deactivated. Existing plans continue to reconcile.'); await load(); }
+    try { await webhooksAPI.update(route.id, { status: 'inactive' }); setNotice('Webhook deactivated. Existing plans continue to reconcile.'); await load(); }
     catch (error) { setError(errorText(error)); }
     finally { mutation.current = false; setBusy(false); }
   }
