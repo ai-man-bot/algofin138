@@ -9,6 +9,7 @@ export function webhookEvent(row: any, names: Map<string, string>, option = fals
   if (option) return {
     id: row.id, webhook: names.get(row.route_scope.replace('route:', '')) || 'Strategy option webhook',
     timestamp: row.created_at, status: row.status, error: row.last_error,
+    receivedMessage: row.original_message ?? null,
     payload: { symbol: row.symbol, action: 'buy', quantity: row.quantity, type: 'limit' },
     alpacaOrder: { type: 'limit', status: row.entry_status || row.status, filled_qty: row.entry_filled_qty ?? 0 },
     plan_id: row.id,
@@ -18,6 +19,7 @@ export function webhookEvent(row: any, names: Map<string, string>, option = fals
   return {
     id: row.id, webhook: names.get(row.route_id) || 'Strategy webhook', timestamp: row.created_at,
     status: row.status, error: row.error_message,
+    receivedMessage: typeof payload.message === 'string' ? payload.message : null,
     payload: { symbol: row.symbol || payload.symbol, action: row.side || payload.side || payload.action,
       quantity: payload.qty ?? payload.quantity, type: payload.order_type ?? payload.type },
     alpacaOrder: { type: order.type, status: order.status || row.status,
@@ -46,7 +48,7 @@ export async function handleWebhookManagement(req: Request, url: URL, deps: {
 
     if (req.method === 'GET' && action === 'events') {
       let logs = db.from('webhook_order_request_logs').select('id,route_id,created_at,status,error_message,symbol,side,request_payload,response_payload').eq('user_id', userId);
-      let plans = db.from('option_trade_plans').select('id,route_scope,created_at,status,last_error,symbol,quantity,entry_status,entry_filled_qty').eq('user_id', userId);
+      let plans = db.from('option_trade_plans').select('id,route_scope,created_at,status,last_error,original_message,symbol,quantity,entry_status,entry_filled_qty').eq('user_id', userId);
       if (route) { logs = logs.eq('route_id', id); plans = plans.eq('route_scope', `route:${id}`); }
       const [logRows, planRows] = await Promise.all([logs.order('created_at', { ascending: false }).limit(100), plans.order('created_at', { ascending: false }).limit(100)]);
       fail(logRows.error); fail(planRows.error);

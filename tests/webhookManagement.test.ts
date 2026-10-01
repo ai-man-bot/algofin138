@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { marketDate } from '../src/utils/optionWebhook.ts';
-import { handleWebhookManagement } from '../supabase/functions/webhook-listener/webhook_management.ts';
+import { handleWebhookManagement, webhookEvent } from '../supabase/functions/webhook-listener/webhook_management.ts';
+
+const closingMessage = 'AAPL: 335C 10/9: STC Sell to close at 2.10';
+const rejectedEvent = webhookEvent({ request_payload: { message: closingMessage, secret: 'do-not-return' }, status: 'option_plan_rejected' }, new Map());
+assert.equal(rejectedEvent.receivedMessage, closingMessage);
+assert.ok(!JSON.stringify(rejectedEvent).includes('do-not-return'));
+assert.equal(webhookEvent({ route_scope: 'route:test', original_message: closingMessage }, new Map(), true).receivedMessage, closingMessage);
+assert.equal(webhookEvent({ request_payload: {} }, new Map()).receivedMessage, null);
 
 const owned = '11111111-1111-4111-8111-111111111111';
 const foreign = '22222222-2222-4222-8222-222222222222';
