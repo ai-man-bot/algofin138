@@ -155,7 +155,7 @@ export function WebhooksPage() {
       <h3>Preview message · {previewRoute.name}</h3><p>This validates the message and option contract. It does not submit an order or create a trade plan.</p>
       <label>Option message or JSON<textarea className={field} disabled={busy} value={payload} onChange={event => { setPayload(event.target.value); setPreview(null); }} /></label>
       <div className="flex"><button className={button} disabled={busy}>{busy ? 'Validating…' : 'Validate message'}</button><button type="button" className={button} disabled={busy} onClick={() => setPreviewRoute(null)}>Close preview</button></div>
-      {preview && <div role="status"><p>Preview valid. No order placed. Broker acceptance, account eligibility, and runtime risk checks are not verified by preview.</p>
+      {preview && <div role="status"><p>{preview.executable === false ? preview.reason || 'This message needs review or configuration.' : 'Message parsed. No order placed. Broker acceptance, account eligibility, and runtime risk checks are not verified by preview.'}</p>
         <pre className="overflow-x-auto text-sm">{JSON.stringify(preview, null, 2)}</pre></div>}
     </form>}
     <section className={panel}>
