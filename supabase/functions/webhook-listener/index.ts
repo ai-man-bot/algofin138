@@ -25,6 +25,8 @@ import {
 } from "../../../src/utils/legacyStrategyRoutes.ts";
 import { buildAlpacaOrderFromWebhookPayload } from "../../../src/utils/webhookAlpacaOrders.ts";
 import { decodeWebhookBody, parseOptionMessage, isOptionMessagePayload } from "../../../src/utils/optionWebhook.ts";
+import { parseWebhookSignal, signalExecutionGap } from "../../../src/utils/webhookSignal.ts";
+import { storeOptionSignal } from './option_signal_store.ts';
 import { runOptionPlanBatch } from "./option_plan_worker.ts";
 import { storeOptionPlan, OptionPlanConflict } from './option_plan_store.ts';
 import { handleOptionTicketRoute } from './option_ticket_routes.ts';
@@ -1028,6 +1030,13 @@ async function receiveOptionMessage(req: Request, supabase: any, payload: any, t
       logRoute = route;
     }
     await updateWebhookOrderRequestLog(supabase, requestLogId, { status: 'option_route_matched', httpStatus: 202, route: logRoute });
+    const conflicting = ['symbol', 'side', 'action', 'qty', 'quantity', 'type', 'order_type', 'orderType',
+      'limit_price', 'limitPrice', 'price', 'time_in_force', 'timeInForce', 'position_intent'];
+    if (conflicting.some(key => payload[key] !== undefined)) return jsonResponse({ error: 'Option messages cannot include separate order fields' }, 400);
+    const instruction = parseWebhookSignal(payload.message);
+    const gap = signalExecutionGap(instruction);
+    if (gap) return jsonResponse({ ok: false, instruction,
+      status: instruction.action === 'incomplete_close' ? 'needs_review' : 'needs_configuration', error: gap }, 409);
     // No order can be accepted until the persistent worker has been configured.
     if (!Deno.env.get('OPTION_WORKER_SECRET')) return jsonResponse({ error: 'Option worker is not configured' }, 503);
     const ready = await supabase.rpc('option_worker_ready', {
@@ -1035,13 +1044,18 @@ async function receiveOptionMessage(req: Request, supabase: any, payload: any, t
       expected_secret: Deno.env.get('OPTION_WORKER_SECRET'),
     });
     if (ready.error || ready.data !== true) return jsonResponse({ error: 'Option reconciliation schedule is not configured' }, 503);
-    const parsed = parseOptionMessage(payload.message);
-    // A mixed stock/option payload must never silently override either instruction.
-    const conflicting = ['symbol', 'side', 'action', 'qty', 'quantity', 'type', 'order_type', 'orderType',
-      'limit_price', 'limitPrice', 'price', 'time_in_force', 'timeInForce', 'position_intent'];
-    if (conflicting.some(key => payload[key] !== undefined)) return jsonResponse({ error: 'Option messages cannot include separate order fields' }, 400);
     const connection = await getBrokerAccountAndHeaders(supabase, userId, brokerId);
     if (connection.error || !connection.broker) return jsonResponse({ error: connection.error || 'Broker not connected' }, 409);
+    if (instruction.action === 'close_all' || instruction.action === 'target_reached') {
+      const {plan,action,duplicate}=await storeOptionSignal(supabase,{
+        userId,brokerId:connection.broker.id,baseUrl:getBrokerBaseUrl(connection.broker),scope,instruction,
+        message:payload.message,eventId:payload.event_id ?? req.headers.get('x-webhook-id') ?? undefined,
+      });
+      runWebhookBackgroundTask(async()=>{await runOptionPlanBatch(supabase,getBrokerAccountAndHeaders,plan.id);});
+      return jsonResponse({ok:true,duplicate,plan_id:plan.id,action_id:action.id,instruction,
+        status:'option_action_queued',symbol:plan.symbol,message:'Action stored; broker execution and protection are reconciled asynchronously.'},202);
+    }
+    const parsed = parseOptionMessage(payload.message);
     const { plan, duplicate } = await storeOptionPlan(supabase, {
       parsed, userId, brokerId: connection.broker.id, baseUrl: getBrokerBaseUrl(connection.broker), scope,
       strategyId, message: payload.message, eventId: payload.event_id ?? req.headers.get('x-webhook-id') ?? undefined,
@@ -1599,7 +1613,8 @@ Deno.serve(async (req: Request) => {
     const response = await receiveOptionMessage(req, supabase, payload, token, legacyStrategyId, requestLog?.id);
     const result = await response.clone().json();
     await updateWebhookOrderRequestLog(supabase, requestLog?.id, {
-      status: response.ok ? 'option_plan_queued' : 'option_plan_rejected', httpStatus: response.status,
+      status: result.status === 'needs_configuration' || result.status === 'needs_review' || result.status === 'option_action_queued'
+        ? result.status : response.ok ? 'option_plan_queued' : 'option_plan_rejected', httpStatus: response.status,
       response: result, error: result.error ?? null,
     });
     return response;

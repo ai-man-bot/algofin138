@@ -1,6 +1,8 @@
 import { decodeWebhookBody, isOptionMessagePayload, optionOrder } from '../../../src/utils/optionWebhook.ts';
 import { buildAlpacaOrderFromWebhookPayload } from '../../../src/utils/webhookAlpacaOrders.ts';
 import { handleOptionTicketRoute } from './option_ticket_routes.ts';
+import { parseWebhookSignal, signalExecutionGap } from '../../../src/utils/webhookSignal.ts';
+import { resolveOptionSignalPlan } from './option_signal_store.ts';
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const fail = (error: any) => { if (error) throw new Error(error.message); };
@@ -11,7 +13,7 @@ export function webhookEvent(row: any, names: Map<string, string>, option = fals
     timestamp: row.created_at, status: row.status, error: row.last_error,
     receivedMessage: row.original_message ?? null,
     payload: { symbol: row.symbol, action: 'buy', quantity: row.quantity, type: 'limit' },
-    alpacaOrder: { type: 'limit', status: row.entry_status || row.status, filled_qty: row.entry_filled_qty ?? 0 },
+    alpacaOrder: { type: 'limit', status: row.management?.enabled ? row.status : row.entry_status || row.status, filled_qty: row.entry_filled_qty ?? 0 },
     plan_id: row.id,
   };
   const payload = row.request_payload || {};
@@ -20,11 +22,21 @@ export function webhookEvent(row: any, names: Map<string, string>, option = fals
     id: row.id, webhook: names.get(row.route_id) || 'Strategy webhook', timestamp: row.created_at,
     status: row.status, error: row.error_message,
     receivedMessage: typeof payload.message === 'string' ? payload.message : null,
-    payload: { symbol: row.symbol || payload.symbol, action: row.side || payload.side || payload.action,
+    instruction: row.response_payload?.instruction ?? null,
+    payload: { symbol: row.symbol || payload.symbol || row.response_payload?.instruction?.underlying, action: row.side || payload.side || payload.action,
       quantity: payload.qty ?? payload.quantity, type: payload.order_type ?? payload.type },
     alpacaOrder: { type: order.type, status: order.status || row.status,
       filled_qty: order.filled_qty, filled_avg_price: order.filled_avg_price },
   };
+}
+
+export function optionActionEvent(row: any, names: Map<string,string>) {
+  const sale=row.execution?.sale;
+  return {id:row.id,webhook:names.get(row.route_scope.replace('route:','')) || 'Strategy option webhook',
+    timestamp:row.created_at,status:row.status,error:row.last_error,receivedMessage:row.original_message,instruction:row.instruction,
+    payload:{symbol:row.symbol || sale?.payload?.symbol || row.instruction?.underlying,action:'sell',quantity:sale?.payload?.qty},
+    alpacaOrder:{type:sale?.payload?.type,status:row.status==='completed' ? sale?.status || row.status : row.status,filled_qty:sale?.filled_qty},
+    plan_id:row.plan_id,action_id:row.id};
 }
 
 export async function handleWebhookManagement(req: Request, url: URL, deps: {
@@ -48,13 +60,15 @@ export async function handleWebhookManagement(req: Request, url: URL, deps: {
 
     if (req.method === 'GET' && action === 'events') {
       let logs = db.from('webhook_order_request_logs').select('id,route_id,created_at,status,error_message,symbol,side,request_payload,response_payload').eq('user_id', userId);
-      let plans = db.from('option_trade_plans').select('id,route_scope,created_at,status,last_error,original_message,symbol,quantity,entry_status,entry_filled_qty').eq('user_id', userId);
-      if (route) { logs = logs.eq('route_id', id); plans = plans.eq('route_scope', `route:${id}`); }
-      const [logRows, planRows] = await Promise.all([logs.order('created_at', { ascending: false }).limit(100), plans.order('created_at', { ascending: false }).limit(100)]);
-      fail(logRows.error); fail(planRows.error);
+      let plans = db.from('option_trade_plans').select('id,route_scope,created_at,status,last_error,original_message,symbol,quantity,entry_status,entry_filled_qty,management').eq('user_id', userId);
+      let actions = db.from('option_signal_actions').select('*').eq('user_id',userId);
+      if (route) { logs = logs.eq('route_id', id); plans = plans.eq('route_scope', `route:${id}`); actions=actions.eq('route_scope',`route:${id}`); }
+      const [logRows, planRows, actionRows] = await Promise.all([logs.order('created_at', { ascending: false }).limit(100), plans.order('created_at', { ascending: false }).limit(100),actions.order('created_at',{ascending:false}).limit(100)]);
+      fail(logRows.error); fail(planRows.error); fail(actionRows.error);
       return respond([
         ...(logRows.data || []).filter((row: any) => !row.response_payload?.plan_id).map((row: any) => webhookEvent(row, names)),
         ...(planRows.data || []).filter((row: any) => !row.route_scope.startsWith('manual:')).map((row: any) => webhookEvent(row, names, true)),
+        ...(actionRows.data || []).map((row:any)=>optionActionEvent(row,names)),
       ].sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp)).slice(0, 100));
     }
     if (req.method === 'GET' && !action && !id) {
@@ -100,6 +114,26 @@ export async function handleWebhookManagement(req: Request, url: URL, deps: {
           return respond({ error: 'Option messages cannot include separate order fields' }, 400);
         }
         const base = connection.broker.base_url || connection.broker.baseUrl;
+        let instruction;
+        try { instruction = parseWebhookSignal(payload.message); }
+        catch (error: any) { return respond({ error: error.message }, 400); }
+        const gap = signalExecutionGap(instruction);
+        if (gap) return respond({ ok: true, preview_only: true, executable: false,
+          instruction, status: instruction.action === 'incomplete_close' ? 'needs_review' : 'needs_configuration',
+          reason: gap, broker_id: route.broker_account_id,
+          environment: base === 'https://paper-api.alpaca.markets' ? 'paper' : 'live' });
+        if(instruction.action==='close_all'||instruction.action==='target_reached') {
+          try {
+            const plan=await resolveOptionSignalPlan(db,userId,route.broker_account_id,`route:${route.id}`,instruction);
+            if(plan.broker_base_url!==base) return respond({error:'Broker environment changed; restore original connection'},409);
+            const remaining=Math.max(0,Number(plan.entry_filled_qty)-Number(plan.target_filled_qty)-Number(plan.management?.exit_filled_qty || 0));
+            return respond({ok:true,preview_only:true,instruction,plan_id:plan.id,symbol:plan.symbol,
+              environment:base==='https://paper-api.alpaca.markets'?'paper':'live',broker_id:route.broker_account_id,
+              policy:{full_close:'market',target_contracts:1,retain_runner:1,stop_type:'stop',stop_time_in_force:'gtc'},
+              remaining_recorded:remaining,quantity_finalized_after_broker_reconciliation:true,
+              cancel_before_execution:['Unfilled entry quantity','Outstanding first target','Previous protective stop']});
+          } catch(error:any) { return respond({ok:true,preview_only:true,executable:false,instruction,status:'needs_review',reason:error.message}); }
+        }
         const previewUrl = new URL(`${deps.baseUrl}/option-plans/preview`);
         const preview = await handleOptionTicketRoute(new Request(previewUrl, { method: 'POST', body: JSON.stringify({
           ...payload, broker_id: route.broker_account_id, environment: base === 'https://paper-api.alpaca.markets' ? 'paper' : 'live',

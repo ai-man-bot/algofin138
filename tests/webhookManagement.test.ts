@@ -83,6 +83,27 @@ const badMessage = await request(`/${owned}/preview`, 'POST', { payload: { messa
 assert.equal(badMessage.status, 400);
 const malformed = await request(`/${owned}/preview`, 'POST', { payload: 'not an option' });
 assert.equal(malformed.status, 400);
+const equityText=await request(`/${owned}/preview`,'POST',{payload:'WULF: BTO Buy To Open at 14.68 with first target above 14.97'});
+assert.equal(equityText.body.executable,false);assert.equal(equityText.body.status,'needs_configuration');assert.equal(equityText.body.instruction.asset,'equity');
+const dca=await request(`/${owned}/preview`,'POST',{payload:'PURR 20C 12/18: DCAAdd more at 0.71 for dollar cost averaging.'});
+assert.equal(dca.body.instruction.action,'add');assert.equal(dca.body.executable,false);
+const exit=await request(`/${owned}/preview`,'POST',{payload:'AAPL 335C 10/09: STCClose the trade at 2.40!'});
+assert.equal(exit.body.instruction.action,'close_all');assert.equal(exit.body.status,'needs_review');assert.equal(writes,0);
+const exitYear=Number(marketDate().slice(0,4))+1;
+tables.option_trade_plans.push({id:'close-preview',user_id:'alice',broker_account_id:'paper-1',broker_base_url:'https://paper-api.alpaca.markets',
+  route_scope:`route:${owned}`,underlying:'AAPL',strike:335,option_type:'call',expiration:`${exitYear}-10-09`,
+  symbol:`AAPL${String(exitYear).slice(-2)}1009C00335000`,status:'first_target_filled',entry_filled_qty:3,target_filled_qty:1});
+const validExit=await request(`/${owned}/preview`,'POST',{payload:`AAPL 335C 10/09/${exitYear}: STC Close the trade at 2.40!`});
+assert.equal(validExit.body.plan_id,'close-preview');assert.equal(validExit.body.policy.full_close,'market');
+assert.equal(validExit.body.remaining_recorded,2);assert.equal(validExit.body.quantity_finalized_after_broker_reconciliation,true);
+assert.equal(writes,0,'Exit preview must not queue an action or place an order');tables.option_trade_plans.pop();
+tables.option_signal_actions=[{id:'action-own',user_id:'alice',route_scope:`route:${owned}`,plan_id:'plan-1',
+  original_message:'close',created_at:'2026-09-26T14:00:00Z',status:'processing',symbol:'AAPL261009C00335000',
+  execution:{sale:{payload:{symbol:'AAPL261009C00335000',qty:'2',type:'market'},status:'filled',filled_qty:2}}},
+  {id:'action-foreign',user_id:'bob',route_scope:`route:${foreign}`,created_at:'2026-09-26T14:00:00Z'}];
+const actionEvents=await request('/all/events');assert.ok(!JSON.stringify(actionEvents).includes('action-foreign'));
+assert.equal(actionEvents.body.find((row:any)=>row.id==='action-own').alpacaOrder.status,'processing','Sale fill does not imply stop update completed');
+tables.option_signal_actions=[];
 const optionUrl = new URL(`${deps.baseUrl}/webhooks/${owned}/preview`);
 const expiration = marketDate();
 const [current, month, day] = expiration.split('-');
