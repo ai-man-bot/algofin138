@@ -1,4 +1,338 @@
 /*! tailwindcss v4.1.3 | MIT License | https://tailwindcss.com */
+:root {
+  --af-bg: #fafaf7;
+  --af-surface: #ffffff;
+  --af-surface-2: #f5f4ee;
+  --af-line: #eceae2;
+  --af-line-2: #e2dfd4;
+  --af-ink: #15161a;
+  --af-ink-2: #3f4047;
+  --af-muted: #757680;
+  --af-faint: #a8a9b3;
+  --af-primary: oklch(0.50 0.18 270);
+  --af-primary-soft: oklch(0.95 0.04 270);
+  --af-primary-ink: oklch(0.32 0.14 270);
+  --af-pos: oklch(0.55 0.14 155);
+  --af-pos-soft: oklch(0.95 0.04 155);
+  --af-neg: oklch(0.60 0.18 25);
+  --af-neg-soft: oklch(0.95 0.04 25);
+  --af-warn: oklch(0.70 0.14 75);
+  --af-warn-soft: oklch(0.96 0.05 75);
+  --af-radius: 14px;
+  --af-shadow-sm: 0 1px 2px rgba(15,16,20,.04), 0 1px 1px rgba(15,16,20,.03);
+  --af-shadow-pop: 0 12px 48px -12px rgba(15,16,20,.18), 0 2px 8px rgba(15,16,20,.06);
+}
+
+.af-app-shell {
+  min-height: 100vh;
+  display: grid;
+  background: var(--af-bg);
+  color: var(--af-ink);
+  transition: grid-template-columns 0.18s ease;
+  font-feature-settings: "cv11" 1;
+}
+
+.af-sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--af-line);
+  background: var(--af-surface);
+}
+
+.af-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 1px solid var(--af-line);
+  background: var(--af-surface);
+  padding: 12px 24px;
+}
+
+.af-card {
+  border: 1px solid var(--af-line);
+  border-radius: var(--af-radius);
+  background: var(--af-surface);
+  box-shadow: var(--af-shadow-sm);
+}
+
+.af-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+.af-num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "cv11" 1;
+}
+
+.af-table-head {
+  display: grid;
+  border-bottom: 1px solid var(--af-line);
+  background: var(--af-surface-2);
+  color: var(--af-faint);
+  font-size: 10px;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.af-table-row {
+  display: grid;
+  align-items: center;
+  border-bottom: 1px solid var(--af-line);
+  color: var(--af-ink-2);
+}
+
+.af-table-row:last-child {
+  border-bottom: 0;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(15,16,20,0.12);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (max-width: 760px) {
+  .af-app-shell {
+    grid-template-columns: 64px minmax(0, 1fr) !important;
+  }
+
+  .af-topbar {
+    padding: 10px 14px;
+  }
+}
+
+@media (min-width: 1024px) and (max-width: 1399px) {
+  .af-dashboard-kpis {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .af-dashboard-primary-grid {
+    grid-template-columns: minmax(0, 1.55fr) minmax(300px, .9fr);
+  }
+
+  .af-dashboard-secondary-grid {
+    grid-template-columns: minmax(260px, 1fr) minmax(220px, .8fr) minmax(280px, 1fr) minmax(240px, .8fr);
+  }
+
+  .af-strategylab-builder {
+    grid-template-columns: 300px minmax(0, 1fr) 292px;
+  }
+
+  .af-builder-canvas {
+    min-height: 520px;
+  }
+}
+
+@media print {
+  @page {
+    size: 1782px 1320px;
+    margin: 0;
+  }
+
+  html,
+  body,
+  #root {
+    width: 1782px !important;
+    min-width: 1782px !important;
+    min-height: 1320px !important;
+    overflow: visible !important;
+    background: var(--af-bg) !important;
+  }
+
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .af-app-shell {
+    width: 1782px !important;
+    min-width: 1782px !important;
+    min-height: 1320px !important;
+    grid-template-columns: 272px minmax(0, 1fr) !important;
+    transform-origin: top left;
+  }
+
+  .af-sidebar {
+    position: static !important;
+    width: 272px !important;
+    min-width: 272px !important;
+    height: 1320px !important;
+    min-height: 1320px !important;
+    padding: 14px 12px !important;
+  }
+
+  .af-topbar {
+    position: static !important;
+    height: 60px !important;
+    padding: 10px 30px !important;
+  }
+
+  .af-topbar > .hidden {
+    display: flex !important;
+  }
+
+  .af-app-shell main > div {
+    overflow: visible !important;
+    padding: 28px 30px !important;
+  }
+
+  .af-card {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .af-dashboard-view,
+  .af-strategylab-view {
+    gap: 18px !important;
+  }
+
+  .af-dashboard-hero {
+    display: flex !important;
+    align-items: center !important;
+    min-height: 92px !important;
+    padding: 18px !important;
+  }
+
+  .af-dashboard-kpis {
+    display: grid !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    gap: 16px !important;
+  }
+
+  .af-dashboard-kpis .af-card {
+    min-height: 158px !important;
+    padding: 28px 24px !important;
+  }
+
+  .af-dashboard-primary-grid {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1.7fr) minmax(0, .82fr) !important;
+    gap: 16px !important;
+  }
+
+  .af-equity-card,
+  .af-feed-card {
+    min-height: 500px !important;
+  }
+
+  .af-equity-chart {
+    height: 260px !important;
+  }
+
+  .af-dashboard-secondary-grid {
+    display: grid !important;
+    grid-template-columns: 1.05fr .9fr 1.15fr .85fr !important;
+    gap: 16px !important;
+  }
+
+  .af-dashboard-positions {
+    display: none !important;
+  }
+
+  .af-strategylab-header {
+    display: flex !important;
+    align-items: flex-start !important;
+  }
+
+  .af-strategylab-tabs {
+    overflow: visible !important;
+  }
+
+  .af-strategylab-builder {
+    display: grid !important;
+    grid-template-columns: 320px minmax(0, 1fr) 350px !important;
+    gap: 18px !important;
+    align-items: stretch !important;
+  }
+
+  .af-block-library,
+  .af-builder-canvas-card,
+  .af-strategylab-rail {
+    min-width: 0 !important;
+  }
+
+  .af-builder-canvas {
+    min-height: 560px !important;
+  }
+}
+
+.af-app-shell .bg-\[\#0f172a\] {
+  background-color: transparent !important;
+}
+
+.af-app-shell .bg-slate-950,
+.af-app-shell .bg-slate-950\/40,
+.af-app-shell .bg-slate-950\/50,
+.af-app-shell .bg-slate-900,
+.af-app-shell .bg-slate-900\/30,
+.af-app-shell .bg-slate-900\/40,
+.af-app-shell .bg-slate-900\/50,
+.af-app-shell .bg-slate-800,
+.af-app-shell .bg-slate-800\/30,
+.af-app-shell .bg-slate-800\/50 {
+  background-color: var(--af-surface) !important;
+}
+
+.af-app-shell .bg-slate-700,
+.af-app-shell .bg-slate-700\/30,
+.af-app-shell .bg-slate-700\/50 {
+  background-color: var(--af-surface-2) !important;
+}
+
+.af-app-shell .border-slate-800,
+.af-app-shell .border-slate-700,
+.af-app-shell .border-slate-700\/30,
+.af-app-shell .border-slate-700\/50,
+.af-app-shell .border-slate-600,
+.af-app-shell .border-slate-600\/50 {
+  border-color: var(--af-line) !important;
+}
+
+.af-app-shell .text-white,
+.af-app-shell .text-slate-50,
+.af-app-shell .text-slate-100,
+.af-app-shell .text-slate-200,
+.af-app-shell .text-slate-300 {
+  color: var(--af-ink) !important;
+}
+
+.af-app-shell .text-slate-400,
+.af-app-shell .text-slate-500 {
+  color: var(--af-muted) !important;
+}
+
+.af-app-shell .text-slate-600 {
+  color: var(--af-faint) !important;
+}
+
+.af-app-shell .shadow,
+.af-app-shell .shadow-lg,
+.af-app-shell .shadow-xl {
+  box-shadow: var(--af-shadow-sm) !important;
+}
+
+.af-app-shell input,
+.af-app-shell select,
+.af-app-shell textarea {
+  color: var(--af-ink);
+}
+
 @layer properties {
   @supports (((-webkit-hyphens: none)) and (not (margin-trim: inline))) or ((-moz-orient: inline) and (not (color: rgb(from red r g b)))) {
     *, :before, :after, ::backdrop {

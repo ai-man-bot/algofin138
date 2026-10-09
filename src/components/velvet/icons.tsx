@@ -1,0 +1,41 @@
+import {
+  Activity,
+  Bell,
+  BarChart3,
+  BriefcaseBusiness,
+  ChevronDown,
+  FlaskConical,
+  Gauge,
+  LayoutDashboard,
+  Menu,
+  MoreHorizontal,
+  Network,
+  Search,
+  Settings,
+  ShieldCheck,
+  Sparkles,
+  User,
+  Webhook,
+} from 'lucide-react';
+
+const iconClass = 'h-4 w-4';
+
+export const VelvetIcons = {
+  activity: <Activity className={iconClass} strokeWidth={1.7} />,
+  bell: <Bell className={iconClass} strokeWidth={1.7} />,
+  brokers: <BriefcaseBusiness className={iconClass} strokeWidth={1.7} />,
+  chevron: <ChevronDown className={iconClass} strokeWidth={1.7} />,
+  dashboard: <LayoutDashboard className={iconClass} strokeWidth={1.7} />,
+  lab: <FlaskConical className={iconClass} strokeWidth={1.7} />,
+  menu: <Menu className={iconClass} strokeWidth={1.7} />,
+  more: <MoreHorizontal className={iconClass} strokeWidth={1.7} />,
+  operations: <Gauge className={iconClass} strokeWidth={1.7} />,
+  search: <Search className="h-3.5 w-3.5" strokeWidth={1.7} />,
+  settings: <Settings className={iconClass} strokeWidth={1.7} />,
+  shield: <ShieldCheck className={iconClass} strokeWidth={1.7} />,
+  sparkles: <Sparkles className={iconClass} strokeWidth={1.7} />,
+  strategies: <Network className={iconClass} strokeWidth={1.7} />,
+  trades: <BarChart3 className={iconClass} strokeWidth={1.7} />,
+  user: <User className={iconClass} strokeWidth={1.7} />,
+  webhooks: <Webhook className={iconClass} strokeWidth={1.7} />,
+};
