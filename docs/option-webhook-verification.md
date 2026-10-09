@@ -1,7 +1,8 @@
 # Deployment and verification
 
 Supabase project: `dzboqhobrmzglyuofcyk`.
-Deployed function: `webhook-listener`, version **37**, ACTIVE (GitHub deployment).
+Deployed function: `webhook-listener`. Management release version **38** verified
+ACTIVE through the GitHub deployment pipeline.
 
 Completed:
 
@@ -63,13 +64,28 @@ released, and the two latest scheduled HTTP responses were 200 without timeouts.
   loading/selection, and account-filtered plan history. Both input paths previewed
   `PLTR261016P00190000`, expiration 2026-10-16, 3 DAY contracts at 6.65 and one GTC
   target at 7.65. The Submit button was never activated.
-- Webhooks no longer crashes. Signed-in inspection exposed a separate pre-existing
-  backend gap: `/webhooks` and `/webhooks/all/events` management routes are absent.
-  The frontend now exposes loading failures instead of silently reporting an empty
-  list. Restoring webhook management CRUD/events is separate outstanding work;
-  existing tokenized webhook ingress and Operations option plan history work.
+- Webhooks no longer crashes. Follow-up implementation restores owner-scoped route
+  listing, creation, editing, deactivation, and event history. New routes require an
+  explicit connected Alpaca account and paper/live environment confirmation.
+  Existing strategy associations and tokens are preserved during edits.
+- The former Test action is a read-only message preview: raw option text and JSON
+  are validated without storing a plan or submitting any broker order. Errors are
+  visible. Accepted/queued entries are not reported as fills.
+- Management tests cover cross-user isolation, account/environment mismatch,
+  preview-only behavior, deactivation without canceling existing plans, sanitized
+  event output, and database error propagation. Full tests and Deno checks passed.
 
 ## Remaining user-led paper verification
+
+Management release `dd0ccdd` reached Vercel READY and applied migration
+`202609260001`. The scheduled worker continued returning HTTP 200. Read-only
+inspection found existing paper entries for `PLTR261023C00150000` and
+`PURR261218C00020000` accepted with zero fills, no errors, and targets still waiting
+for an entry fill. These orders were not submitted or modified by the release checks.
+
+Inactive routes also support message preview without enabling signal delivery.
+Old routes tied to a removed account are displayed with a connection warning;
+their owner must explicitly choose the intended account in Edit webhook.
 
 The paper market was closed during deployment verification. Per the user's
 instruction, no follow-up has been scheduled. No valid paper or live order was

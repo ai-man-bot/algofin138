@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { alpacaAPI, brokersAPI, getCachedRequestSnapshot, getRequestMetrics, notificationsAPI, strategiesAPI, strategyLabAPI, testWebhook } from '../src/utils/api.ts';
+import { alpacaAPI, brokersAPI, getCachedRequestSnapshot, getRequestMetrics, notificationsAPI, strategiesAPI, strategyLabAPI } from '../src/utils/api.ts';
 
 const originalFetch = globalThis.fetch;
 
@@ -40,9 +40,8 @@ assert.equal(third[0]?.id, 'alpaca:2');
 await notificationsAPI.markAsRead('note-1');
 await notificationsAPI.markAllAsRead();
 await notificationsAPI.saveSettings({ pushEnabled: true });
-await testWebhook('https://example.com/hook', { action: 'buy' });
 
-assert.equal(fetchCount, 7);
+assert.equal(fetchCount, 6);
 
 await strategyLabAPI.getQuote('AAPL', { forceRefresh: true });
 await strategyLabAPI.getBars('AAPL', { timeframe: '1D', period: '2y', limit: 250 }, { forceRefresh: true });
@@ -63,7 +62,7 @@ await strategiesAPI.create({ name: 'Legacy Strategy', strategyType: 'tradingview
 await strategiesAPI.update('legacy-strategy-1', { status: 'active' }).catch(() => null);
 await strategiesAPI.delete('legacy-strategy-1').catch(() => null);
 
-assert.equal(fetchCount, 25);
+assert.equal(fetchCount, 24);
 
 const metrics = getRequestMetrics();
 assert.ok(metrics.some((metric) => metric.path === '/brokers' && metric.method === 'GET'));
@@ -71,7 +70,6 @@ assert.ok(metrics.some((metric) => metric.path === '/brokers' && metric.method =
 assert.ok(metrics.some((metric) => metric.path === '/notifications/note-1/read' && metric.method === 'PUT'));
 assert.ok(metrics.some((metric) => metric.path === '/notifications/mark-all-read' && metric.method === 'POST'));
 assert.ok(metrics.some((metric) => metric.path === '/notification-settings' && metric.method === 'POST'));
-assert.ok(metrics.some((metric) => metric.path === '/test-webhook' && metric.method === 'POST'));
 assert.ok(metrics.some((metric) => metric.path === '/strategy-lab/market/quote?symbol=AAPL' && metric.method === 'GET'));
 assert.ok(metrics.some((metric) => metric.path.startsWith('/strategy-lab/market/bars?') && metric.method === 'GET'));
 assert.ok(metrics.some((metric) => metric.path === '/strategy-lab/strategies' && metric.method === 'POST'));

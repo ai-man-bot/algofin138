@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { alpacaAPI, brokersAPI, optionPlansAPI } from '../utils/api';
 import { marketDate } from '../utils/optionWebhook';
-import { normalizeOptionTicket, optionPlanLabel, type OptionInstruction, type OptionPlan } from '../utils/optionTicket';
+import { normalizeOptionTicket, type OptionInstruction } from '../utils/optionTicket';
+import { managedPlanLabel, type ManagedOptionPlan } from './optionSignalPresentation';
 import { extractAlpacaOptionContracts, extractAlpacaOptionSnapshots, normalizeOptionChainRows, type OptionChainRow } from '../utils/optionChain';
 import './OptionsOrderTicket.css';
 
@@ -35,7 +36,7 @@ export function OptionsOrderTicket({ active = true }: { active?: boolean }) {
   const [submitting, setSubmitting] = useState(false);
   const [attempted, setAttempted] = useState(false);
   const [submittedId, setSubmittedId] = useState('');
-  const [plans, setPlans] = useState<OptionPlan[]>([]);
+  const [plans, setPlans] = useState<ManagedOptionPlan[]>([]);
   const [historyError, setHistoryError] = useState('');
   const [refresh, setRefresh] = useState(0);
   const chainVersion = useRef(0);
@@ -196,7 +197,7 @@ export function OptionsOrderTicket({ active = true }: { active?: boolean }) {
       <div className="flex items-center justify-between gap-3"><h3 className="text-lg font-semibold text-slate-100">Option plans</h3><button type="button" className={button} disabled={!brokerId} onClick={() => setRefresh(value => value + 1)}>Refresh plans</button></div>
       <p className="mt-1 text-xs text-slate-400">Latest 50 plans for this account, including webhook messages. Updates every 10 seconds while visible.</p>
       {historyError && <p role="alert" className="mt-3 text-rose-300">{historyError}</p>}
-      {!plans.length ? <p className="mt-4 text-sm text-slate-400">{brokerId ? 'No option plans loaded.' : 'Select an account to view its plans.'}</p> : <ul className="mt-4 space-y-3">{plans.map(plan => <li key={plan.id} className="rounded-lg border border-slate-700 p-4 text-sm"><div className="flex flex-wrap justify-between gap-2"><span className="font-mono text-slate-100">{plan.symbol}</span><span className={plan.status === 'needs_attention' || plan.status === 'entry_terminal' ? 'text-amber-300' : 'text-blue-300'}>{optionPlanLabel(plan)}</span></div><p className="mt-2 text-slate-300">Entry ${Number(plan.entry_price).toFixed(2)} · Filled {Number(plan.entry_filled_qty)} / 3 · Target ${Number(plan.target_price).toFixed(2)} · Filled {Number(plan.target_filled_qty)} / 1 · Remaining {Math.max(0, Number(plan.entry_filled_qty) - Number(plan.target_filled_qty))}</p><p className="mt-1 break-all text-xs text-slate-500">Plan {plan.id} · {new Date(plan.created_at).toLocaleString()}{plan.entry_order_id ? ` · Entry order ${plan.entry_order_id}` : ''}{plan.target_order_id ? ` · Target order ${plan.target_order_id}` : ''}</p>{plan.last_error && <p className="mt-2 text-amber-300">{plan.last_error}</p>}</li>)}</ul>}
+      {!plans.length ? <p className="mt-4 text-sm text-slate-400">{brokerId ? 'No option plans loaded.' : 'Select an account to view its plans.'}</p> : <ul className="mt-4 space-y-3">{plans.map(plan => <li key={plan.id} className="rounded-lg border border-slate-700 p-4 text-sm"><div className="flex flex-wrap justify-between gap-2"><span className="font-mono text-slate-100">{plan.symbol}</span><span className={plan.status === 'needs_attention' || plan.status === 'entry_terminal' ? 'text-amber-300' : 'text-blue-300'}>{managedPlanLabel(plan)}</span></div><p className="mt-2 text-slate-300">Entry ${Number(plan.entry_price).toFixed(2)} · Filled {Number(plan.entry_filled_qty)} / 3 · Target ${Number(plan.target_price).toFixed(2)} · Filled {Number(plan.target_filled_qty)} / 1 · Other exit fills {Number(plan.management?.exit_filled_qty || 0)} · Stop {plan.management?.stop_price ? `$${Number(plan.management.stop_price).toFixed(2)}` : '—'} · Remaining {Math.max(0, Number(plan.entry_filled_qty) - Number(plan.target_filled_qty) - Number(plan.management?.exit_filled_qty || 0))}</p><p className="mt-1 break-all text-xs text-slate-500">Plan {plan.id} · {new Date(plan.created_at).toLocaleString()}{plan.entry_order_id ? ` · Entry order ${plan.entry_order_id}` : ''}{plan.target_order_id ? ` · Target order ${plan.target_order_id}` : ''}</p>{plan.last_error && <p className="mt-2 text-amber-300">{plan.last_error}</p>}</li>)}</ul>}
     </div>
   </div>;
 }

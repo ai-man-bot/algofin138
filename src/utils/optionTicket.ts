@@ -7,6 +7,7 @@ export type OptionPlan = OptionInstruction & {
   entry_status: string | null; target_status: string | null; entry_order_id: string | null;
   target_order_id: string | null; entry_filled_qty: number; target_filled_qty: number;
   last_error: string | null; created_at: string;
+  management?: { exit_filled_qty?: number; stop_price?: number | null; enabled?: boolean };
 };
 
 export function normalizeOptionTicket(input: Record<string, unknown>, now = new Date()): OptionInstruction {
@@ -42,6 +43,10 @@ export function optionPlanLabel(plan: Pick<OptionPlan, 'status' | 'entry_status'
   if (plan.status === 'needs_attention') return 'Needs attention';
   if (plan.status === 'entry_terminal') return `Entry ${plan.entry_status || 'not placed'}`;
   if (plan.status === 'first_target_filled') return 'First target filled';
+  if (plan.status === 'closed') return 'Closed';
+  if (plan.status === 'protected') return 'Remaining contracts protected by broker stop';
+  if (plan.status === 'managed') return 'Managed — no active protective stop';
+  if (plan.status === 'management_pending') return 'Exit or stop update pending';
   if (plan.target_status) return `Target ${plan.target_status.replace(/_/g, ' ')}`;
   if (plan.entry_status) return `Entry ${plan.entry_status.replace(/_/g, ' ')}`;
   return plan.status === 'queued' ? 'Plan queued — not yet accepted by Alpaca' : plan.status.replace(/_/g, ' ');

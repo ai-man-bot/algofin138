@@ -446,6 +446,13 @@ export const tradesAPI = {
 ========================= */
 
 export const webhooksAPI = {
+  update: (id: string, payload: any) => mutate(`/webhooks/${id}`, {
+    method: 'PUT', body: JSON.stringify(payload),
+  }, ['/webhooks']),
+
+  preview: (id: string, payload: string) => apiRequest(`/webhooks/${id}/preview`, {
+    method: 'POST', body: JSON.stringify({ payload }),
+  }),
   getAll: (options: CachedRequestOptions = {}) =>
     cachedApiRequest('/webhooks', { method: 'GET', ttlMs: 30_000, ...options }),
 
@@ -471,16 +478,6 @@ export const webhooksAPI = {
       method: 'POST',
     }, ['/webhooks']),
 };
-
-export const testWebhook = (urlOrPayload: string | any = {}, payload?: any) =>
-  apiRequest('/test-webhook', {
-    method: 'POST',
-    body: JSON.stringify(
-      typeof urlOrPayload === 'string'
-        ? { url: urlOrPayload, payload: payload ?? {} }
-        : urlOrPayload
-    ),
-  });
 
 /* =========================
    NOTIFICATIONS

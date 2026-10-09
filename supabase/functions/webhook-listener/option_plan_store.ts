@@ -11,7 +11,10 @@ export async function storeOptionPlan(supabase: any, input: {
     delivery_key: deliveryKey, original_message: input.message, target_time_in_force: 'gtc' };
   const inserted = await supabase.from('option_trade_plans').insert(row).select('*').single();
   if (!inserted.error) return { plan: inserted.data, duplicate: false };
-  if (inserted.error.code !== '23505') throw new Error(inserted.error.message);
+  if (inserted.error.code !== '23505') {
+    if (/event_id was already used/.test(inserted.error.message)) throw new OptionPlanConflict(inserted.error.message);
+    throw new Error(inserted.error.message);
+  }
   const existing = await supabase.from('option_trade_plans').select('*').eq('delivery_key', deliveryKey).eq('user_id', input.userId).single();
   if (existing.error) throw new Error(existing.error.message);
   const plan = existing.data;
