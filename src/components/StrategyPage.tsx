@@ -4,8 +4,8 @@ import { strategiesAPI, alpacaAPI, getAccessToken } from '../utils/api';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { buildFunctionUrl } from '../utils/supabaseUrls';
 import { calculateLiveMetricsFromTrades } from '../utils/tradeAnalytics';
+import { usePolling } from '../utils/usePolling';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import * as XLSX from 'xlsx';
 import { parseBacktestFile, type BacktestData } from '../utils/backtestParser';
 import exampleImage from 'figma:asset/ce6861f4204477d38a1a3de896065fd4f42195d7.png';
 
@@ -177,7 +177,7 @@ interface BacktestResults {
   trades: any[];
 }
 
-export function StrategyPage({ onNavigate }: { onNavigate?: (screen: string) => void }) {
+export function StrategyPage({ onNavigate, active = true }: { onNavigate?: (screen: string) => void; active?: boolean }) {
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [selectedStrategy, setSelectedStrategy] = useState<Strategy | null>(null);
   const [loading, setLoading] = useState(true);
@@ -2161,41 +2161,37 @@ function StrategyTradesPanel({ strategy, trades, loading, onClose, onRefresh }: 
   const avgPL = totalTradesWithPL > 0 ? totalPL / totalTradesWithPL : 0;
 
   // Fetch current prices for open trades
-  useEffect(() => {
-    const fetchPrices = async () => {
-      const symbols = [...new Set(openTrades.map(t => t.symbol))];
-      if (symbols.length === 0) return;
-      
-      try {
-        const response = await alpacaAPI.getQuotes(symbols);
-        const priceMap: Record<string, number> = {};
-        
-        // Alpaca returns { quotes: { SYMBOL: { ap, bp, ... } } }
-        if (response && response.quotes) {
-          symbols.forEach((symbol) => {
-            const quote = response.quotes[symbol];
-            if (quote) {
-              // Use ask price (ap) if available, otherwise bid price (bp)
-              const price = quote.ap || quote.bp || 0;
-              if (price > 0) {
-                priceMap[symbol] = price;
-              }
+  const fetchCurrentPrices = async () => {
+    const symbols = [...new Set(openTrades.map(t => t.symbol))];
+    if (symbols.length === 0) return;
+
+    try {
+      const response = await alpacaAPI.getQuotes(symbols);
+      const priceMap: Record<string, number> = {};
+
+      // Alpaca returns { quotes: { SYMBOL: { ap, bp, ... } } }
+      if (response && response.quotes) {
+        symbols.forEach((symbol) => {
+          const quote = response.quotes[symbol];
+          if (quote) {
+            // Use ask price (ap) if available, otherwise bid price (bp)
+            const price = quote.ap || quote.bp || 0;
+            if (price > 0) {
+              priceMap[symbol] = price;
             }
-          });
-        }
-        setCurrentPrices(priceMap);
-      } catch (error) {
-        console.error('Error fetching current prices:', error);
+          }
+        });
       }
-    };
-    
-    if (activeTab === 'open' && openTrades.length > 0) {
-      fetchPrices();
-      // Refresh prices every 30 seconds
-      const interval = setInterval(fetchPrices, 30000);
-      return () => clearInterval(interval);
+      setCurrentPrices(priceMap);
+    } catch (error) {
+      console.error('Error fetching current prices:', error);
     }
-  }, [activeTab, openTrades.length]);
+  };
+
+  // Refresh prices every 30 seconds while the open-trades tab is shown on an
+  // active screen. Polling pauses when the screen is hidden or the browser
+  // tab is in the background.
+  usePolling(fetchCurrentPrices, 30000, active && activeTab === 'open' && openTrades.length > 0, true);
 
   // Helper function to calculate holding time
   const calculateHoldingTime = (startDate: string) => {

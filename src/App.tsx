@@ -1,10 +1,9 @@
 import { useState, useEffect, Suspense, lazy } from 'react';
 import { LoginPage } from './components/LoginPage';
 import { ResetPasswordPage } from './components/ResetPasswordPage';
+import { AppShell } from './components/AppShell';
 import { PWAInstallPrompt, PWAUpdateNotification } from './components/PWAInstallPrompt';
 import { setAccessToken, clearAccessToken, setAuthErrorCallback } from './utils/api';
-import { projectId, publicAnonKey } from './utils/supabase/info';
-import { createClient } from '@supabase/supabase-js';
 import { initializePWA } from './utils/pwa';
 import './utils/seedData'; // Import seed data utilities
 import './utils/pwaCheck'; // Import PWA health check (exposes checkPWAHealth() in console)
@@ -91,9 +90,9 @@ export default function App() {
   }, [currentScreen, isLoggedIn]);
 
   const checkSession = async () => {
-    // Create Supabase client
-    const supabaseUrl = `https://${projectId}.supabase.co`;
-    const supabase = createClient(supabaseUrl, publicAnonKey);
+    // Get the shared Supabase client (loaded lazily to keep the entry chunk small)
+    const { getSupabaseClient } = await import('./utils/supabase/client');
+    const supabase = getSupabaseClient();
     
     // FIRST: Check if this is a password reset callback (highest priority)
     const hashParams = new URLSearchParams(window.location.hash.substring(1));
@@ -236,10 +235,10 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    // Create Supabase client
-    const supabaseUrl = `https://${projectId}.supabase.co`;
-    const supabase = createClient(supabaseUrl, publicAnonKey);
-    
+    // Get the shared Supabase client (loaded lazily to keep the entry chunk small)
+    const { getSupabaseClient } = await import('./utils/supabase/client');
+    const supabase = getSupabaseClient();
+
     // Sign out from Supabase (clears OAuth session)
     await supabase.auth.signOut();
     
@@ -275,11 +274,11 @@ export default function App() {
       case 'dashboard':
         return <Dashboard onNavigate={setCurrentScreen} selectedBrokerId={selectedBrokerId} setSelectedBrokerId={setSelectedBrokerId} />;
       case 'strategy':
-        return <StrategyPage onNavigate={setCurrentScreen} />;
+        return <StrategyPage onNavigate={setCurrentScreen} active={currentScreen === 'strategy'} />;
       case 'strategy-lab':
         return <StrategyLabPage />;
       case 'trades':
-        return <TradesTab selectedBrokerId={selectedBrokerId} setSelectedBrokerId={setSelectedBrokerId} />;
+        return <TradesTab selectedBrokerId={selectedBrokerId} setSelectedBrokerId={setSelectedBrokerId} active={currentScreen === 'trades'} />;
       case 'analytics':
         return <AnalyticsPage />;
       case 'performance':
@@ -291,7 +290,7 @@ export default function App() {
       case 'brokers':
         return <BrokersPage />;
       case 'notifications':
-        return <NotificationsPage />;
+        return <NotificationsPage active={currentScreen === 'notifications'} />;
       case 'account':
         return <AccountPage userName={userName} userEmail={userEmail} onLogout={handleLogout} />;
       case 'webhook-debug':
@@ -302,142 +301,13 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0f172a] text-white">
-      {/* Top Navigation Bar */}
-      <nav className="border-b border-slate-700/50 bg-slate-900/30 backdrop-blur-sm">
-        <div className="mx-auto max-w-[1600px] px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-8">
-              <h1 className="bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
-                AlgoFin.ai
-              </h1>
-              <div className="flex gap-1 rounded-lg bg-slate-800/50 p-1">
-                <button
-                  onClick={() => setCurrentScreen('dashboard')}
-                  className={`rounded-md px-4 py-2 transition-colors ${
-                    currentScreen === 'dashboard'
-                      ? 'bg-blue-500 text-white'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Dashboard
-                </button>
-                <button
-                  onClick={() => setCurrentScreen('strategy')}
-                  className={`rounded-md px-4 py-2 transition-colors ${
-                    currentScreen === 'strategy'
-                      ? 'bg-blue-500 text-white'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Strategy
-                </button>
-                <button
-                  onClick={() => setCurrentScreen('strategy-lab')}
-                  className={`rounded-md px-4 py-2 transition-colors ${
-                    currentScreen === 'strategy-lab'
-                      ? 'bg-blue-500 text-white'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  StrategyLab
-                </button>
-                <button
-                  onClick={() => setCurrentScreen('trades')}
-                  className={`rounded-md px-4 py-2 transition-colors ${
-                    currentScreen === 'trades'
-                      ? 'bg-blue-500 text-white'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Trades
-                </button>
-                <button
-                  onClick={() => setCurrentScreen('analytics')}
-                  className={`rounded-md px-4 py-2 transition-colors ${
-                    currentScreen === 'analytics'
-                      ? 'bg-blue-500 text-white'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Analytics
-                </button>
-                <button
-                  onClick={() => setCurrentScreen('performance')}
-                  className={`rounded-md px-4 py-2 transition-colors ${
-                    currentScreen === 'performance'
-                      ? 'bg-blue-500 text-white'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Performance
-                </button>
-                <button
-                  onClick={() => setCurrentScreen('operations')}
-                  className={`rounded-md px-4 py-2 transition-colors ${
-                    currentScreen === 'operations'
-                      ? 'bg-blue-500 text-white'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Operations
-                </button>
-                <button
-                  onClick={() => setCurrentScreen('webhooks')}
-                  className={`rounded-md px-4 py-2 transition-colors ${
-                    currentScreen === 'webhooks'
-                      ? 'bg-blue-500 text-white'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Webhooks
-                </button>
-                <button
-                  onClick={() => setCurrentScreen('brokers')}
-                  className={`rounded-md px-4 py-2 transition-colors ${
-                    currentScreen === 'brokers'
-                      ? 'bg-blue-500 text-white'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Brokers
-                </button>
-                <button
-                  onClick={() => setCurrentScreen('notifications')}
-                  className={`rounded-md px-4 py-2 transition-colors ${
-                    currentScreen === 'notifications'
-                      ? 'bg-blue-500 text-white'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Notifications
-                </button>
-              </div>
-            </div>
-            <div className="flex items-center gap-4">
-              <div className="text-right">
-                <p className="text-sm text-slate-100">{userName || 'User'}</p>
-                <p className="text-xs text-slate-400">{userEmail}</p>
-              </div>
-              <button
-                onClick={() => setCurrentScreen('account')}
-                className={`rounded-lg p-2 transition-colors ${
-                  currentScreen === 'account'
-                    ? 'bg-blue-500 text-white'
-                    : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-                }`}
-              >
-                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                </svg>
-              </button>
-            </div>
-          </div>
-        </div>
-      </nav>
-
-      {/* Main Content */}
-      <main>
+    <>
+      <AppShell
+        currentScreen={currentScreen as Exclude<Screen, 'login' | 'reset-password'>}
+        onNavigate={(screen) => setCurrentScreen(screen)}
+        userName={userName}
+        userEmail={userEmail}
+      >
         <Suspense fallback={screenFallback}>
           {visitedScreens.map((screen) => (
             <div
@@ -449,13 +319,9 @@ export default function App() {
             </div>
           ))}
         </Suspense>
-      </main>
-      
-      {/* PWA Install Prompt */}
+      </AppShell>
       <PWAInstallPrompt />
-      
-      {/* PWA Update Notification */}
       <PWAUpdateNotification />
-    </div>
+    </>
   );
 }

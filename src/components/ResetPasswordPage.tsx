@@ -1,7 +1,5 @@
 import { useState, useEffect } from 'react';
 import { Lock } from './CustomIcons';
-import { createClient } from '@supabase/supabase-js';
-import { projectId, publicAnonKey } from '../utils/supabase/info';
 
 interface ResetPasswordPageProps {
   onPasswordReset: () => void;
@@ -60,9 +58,9 @@ export function ResetPasswordPage({ onPasswordReset }: ResetPasswordPageProps) {
         return;
       }
 
-      // Create Supabase client
-      const supabaseUrl = `https://${projectId}.supabase.co`;
-      const supabase = createClient(supabaseUrl, publicAnonKey);
+      // Get the shared Supabase client (loaded lazily to keep the entry chunk small)
+      const { getSupabaseClient } = await import('../utils/supabase/client');
+      const supabase = getSupabaseClient();
 
       console.log('🔄 Updating password...');
 

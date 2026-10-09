@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Plus, Copy, Trash2, RefreshCw, CheckCircle2, XCircle, Clock } from './CustomIcons';
 import { webhooksAPI, testWebhook, strategiesAPI, getRequestMetric } from '../utils/api';
 import { hydrateScreenData, loadScreenData } from '../utils/screenLoader';
-import { LinkIcon } from '@heroicons/react/24/outline';
+import { Link as LinkIcon } from 'lucide-react';
 import { DataRefreshBadge } from './DataRefreshBadge';
 
 // Fallback copy function that works without clipboard permissions
@@ -37,27 +37,33 @@ export function WebhooksPage() {
   const [testPayload, setTestPayload] = useState('{\"action\":\"buy\",\"symbol\":\"AAPL\",\"quantity\":100}');
   const [testResult, setTestResult] = useState<any>(null);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
+  const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
     loadScreen();
   }, []);
 
   const loadScreen = async () => {
+    const failures: string[] = [];
+    const reportFailure = (section: string, error: unknown) => {
+      failures.push(`${section}: ${error instanceof Error ? error.message : 'Request failed'}`);
+      throw error;
+    };
     const requests = [
       {
         key: 'strategies',
         path: '/strategies',
-        load: () => strategiesAPI.getAll().catch(() => []),
+        load: () => strategiesAPI.getAll().catch(error => reportFailure('Strategies', error)),
       },
       {
         key: 'webhooks',
         path: '/webhooks',
-        load: () => webhooksAPI.getAll().catch(() => []),
+        load: () => webhooksAPI.getAll().catch(error => reportFailure('Webhooks', error)),
       },
       {
         key: 'recentEvents',
         path: '/webhooks/all/events',
-        load: () => webhooksAPI.getAllEvents().catch(() => []),
+        load: () => webhooksAPI.getAllEvents().catch(error => reportFailure('Events', error)),
         map: (events: any[]) =>
           [...events].sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()),
       },
@@ -106,6 +112,7 @@ export function WebhooksPage() {
     } catch (error) {
       console.error('Error loading webhooks:', error);
     } finally {
+      setLoadError(failures.join(' · '));
       setLoading(false);
       setIsRefreshing(false);
     }
@@ -217,6 +224,7 @@ export function WebhooksPage() {
       </div>
 
       {/* Webhook Cards */}
+      {loadError && <div role="alert" className="mb-4 rounded-lg bg-rose-500/10 p-4 text-sm text-rose-300">Could not load webhook data. {loadError}</div>}
       <div className="mb-8 space-y-4">
         {webhooks.length === 0 ? (
           <div className="rounded-xl border border-slate-700/50 bg-slate-900/30 p-12 text-center backdrop-blur-sm">
@@ -225,8 +233,8 @@ export function WebhooksPage() {
                 <Plus className="h-8 w-8 text-slate-400" />
               </div>
             </div>
-            <h3 className="mb-2 text-slate-100">No webhooks yet</h3>
-            <p className="mb-6 text-slate-400">Create your first webhook to start receiving signals</p>
+            <h3 className="mb-2 text-slate-100">{loadError ? 'Webhook data unavailable' : 'No webhooks yet'}</h3>
+            <p className="mb-6 text-slate-400">{loadError ? 'Refresh after the service is available.' : 'Create your first webhook to start receiving signals'}</p>
             <button
               onClick={() => setShowModal(true)}
               className="rounded-lg bg-blue-500 px-6 py-3 transition-colors hover:bg-blue-600"

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { alpacaAPI, brokersAPI, webhooksAPI, getRequestMetric } from '../utils/api';
 import { normalizeBrokerConnections } from '../utils/brokerModels';
 import { hydrateScreenData, loadScreenData } from '../utils/screenLoader';
+import { usePolling } from '../utils/usePolling';
 import { NewOpenTradesTable, OrdersTable } from './NewTables';
 import { calculatePerformanceMetricsFromPairs, createTradingPairs } from '../utils/tradeAnalytics';
 import { DataRefreshBadge } from './DataRefreshBadge';
@@ -138,6 +139,8 @@ const calculateHoldingTime = (entryTime: string, exitTime?: string) => {
 interface TradesTabProps {
   selectedBrokerId: string;
   setSelectedBrokerId: (id: string) => void;
+  /** True while this screen is the one being displayed; polling pauses otherwise. */
+  active?: boolean;
 }
 
 const safeNumber = (value: any, fallback = 0) => {
@@ -149,7 +152,7 @@ const isAlpacaBroker = (broker: any) => {
   return broker?.provider === 'alpaca' || broker?.brokerType === 'alpaca';
 };
 
-export function TradesTab({ selectedBrokerId, setSelectedBrokerId }: TradesTabProps) {
+export function TradesTab({ selectedBrokerId, setSelectedBrokerId, active = true }: TradesTabProps) {
   const [activeTab, setActiveTab] = useState<'webhooks' | 'open' | 'orders' | 'closed' | 'pending' | 'pl' | 'performance'>('webhooks');
   const [positions, setPositions] = useState<any[]>([]);
   const [orders, setOrders] = useState<any[]>([]);
@@ -165,14 +168,15 @@ export function TradesTab({ selectedBrokerId, setSelectedBrokerId }: TradesTabPr
 
   useEffect(() => {
     loadData();
-    // Refresh quotes every 10 seconds for open positions
-    const interval = setInterval(() => {
-      if (activeTab === 'open' && positions.length > 0) {
-        refreshQuotes();
-      }
-    }, 10000);
-    return () => clearInterval(interval);
   }, [activeTab, selectedBrokerId]);
+
+  // Refresh quotes every 10 seconds for open positions, but only while this
+  // screen is being displayed and the browser tab is visible.
+  usePolling(() => {
+    if (activeTab === 'open' && positions.length > 0) {
+      refreshQuotes();
+    }
+  }, 10000, active);
 
   const loadData = async () => {
     const hasVisibleData = Boolean(connectedBrokers.length || webhookEvents.length || positions.length || orders.length);

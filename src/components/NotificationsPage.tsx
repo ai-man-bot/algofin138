@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Bell, Mail, MessageSquare, Smartphone, Check, AlertTriangle, TrendingUp, TrendingDown, DollarSign, X, RefreshCw } from './CustomIcons';
 import { notificationsAPI, getCachedRequestSnapshot, getRequestMetric } from '../utils/api';
+import { usePolling } from '../utils/usePolling';
 import { DataRefreshBadge } from './DataRefreshBadge';
 
 interface Notification {
@@ -27,7 +28,7 @@ interface NotificationSettings {
   quietHoursEnd: string;
 }
 
-export function NotificationsPage() {
+export function NotificationsPage({ active = true }: { active?: boolean }) {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [settings, setSettings] = useState<NotificationSettings>({
     emailEnabled: true,
@@ -51,11 +52,11 @@ export function NotificationsPage() {
     loadNotifications();
     loadSettings();
     checkPushPermission();
-    
-    // Auto-refresh every 30 seconds
-    const interval = setInterval(loadNotifications, 30000);
-    return () => clearInterval(interval);
   }, []);
+
+  // Auto-refresh every 30 seconds, but only while this screen is being
+  // displayed and the browser tab is visible.
+  usePolling(() => { loadNotifications(); }, 30000, active);
 
   const checkPushPermission = () => {
     if ('Notification' in window) {

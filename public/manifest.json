@@ -1,0 +1,49 @@
+{
+  "name": "AlgoFin.ai - Algorithmic Trading Dashboard",
+  "short_name": "AlgoFin.ai",
+  "description": "Modern algorithmic trading dashboard with real-time metrics, strategy management, and broker integration",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#3b82f6",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ],
+  "categories": ["finance", "productivity", "business"],
+  "shortcuts": [
+    {
+      "name": "Dashboard",
+      "short_name": "Dashboard",
+      "description": "View trading dashboard",
+      "url": "/?screen=dashboard",
+      "icons": [{ "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+    },
+    {
+      "name": "Trades",
+      "short_name": "Trades",
+      "description": "View your trades",
+      "url": "/?screen=trades",
+      "icons": [{ "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+    },
+    {
+      "name": "Strategies",
+      "short_name": "Strategies",
+      "description": "Manage trading strategies",
+      "url": "/?screen=strategy",
+      "icons": [{ "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+    }
+  ]
+}

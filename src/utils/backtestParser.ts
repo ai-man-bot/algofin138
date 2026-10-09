@@ -1,5 +1,4 @@
 // Utility to parse TradingView Strategy Tester Excel export
-import * as XLSX from 'xlsx';
 
 export interface BacktestData {
   // Performance tab
@@ -47,6 +46,9 @@ const parsePercent = (val: any): number => {
 };
 
 export async function parseBacktestFile(file: File): Promise<BacktestData> {
+  // Load SheetJS lazily: the parser is large and only needed when a user
+  // actually uploads a backtest export.
+  const XLSX = await import('xlsx');
   const data = await file.arrayBuffer();
   const workbook = XLSX.read(data);
   

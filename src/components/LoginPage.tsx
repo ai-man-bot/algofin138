@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Mail, Lock, Chrome } from './CustomIcons';
 import { setAccessToken } from '../utils/api';
-import { createClient } from '@supabase/supabase-js';
-import { projectId, publicAnonKey } from '../utils/supabase/info';
 
 interface LoginPageProps {
   onLogin: (email: string, name: string, token?: string) => void;
@@ -42,8 +40,8 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     setLoading(true);
 
     try {
-      const supabaseUrl = `https://${projectId}.supabase.co`;
-      const supabase = createClient(supabaseUrl, publicAnonKey);
+      const { getSupabaseClient } = await import('../utils/supabase/client');
+      const supabase = getSupabaseClient();
 
       if (isSignUp) {
         // Sign up directly with Supabase Auth (avoids edge-function auth dependency)
@@ -107,10 +105,10 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     setLoading(true);
     
     try {
-      // Create Supabase client for OAuth
-      const supabaseUrl = `https://${projectId}.supabase.co`;
-      const supabase = createClient(supabaseUrl, publicAnonKey);
-      
+      // Get the shared Supabase client (loaded lazily to keep the entry chunk small)
+      const { getSupabaseClient } = await import('../utils/supabase/client');
+      const supabase = getSupabaseClient();
+
       console.log('🔐 Initiating Google OAuth...');
       
       // Trigger Google OAuth flow
@@ -157,9 +155,9 @@ export function LoginPage({ onLogin }: LoginPageProps) {
         return;
       }
 
-      // Create Supabase client
-      const supabaseUrl = `https://${projectId}.supabase.co`;
-      const supabase = createClient(supabaseUrl, publicAnonKey);
+      // Get the shared Supabase client (loaded lazily to keep the entry chunk small)
+      const { getSupabaseClient } = await import('../utils/supabase/client');
+      const supabase = getSupabaseClient();
 
       console.log('📧 Sending password reset email to:', email);
 
