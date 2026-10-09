@@ -8,6 +8,7 @@ import {
   normalizeBrokerConnections,
 } from '../utils/brokerModels';
 import { buildActivityRows, mapRecentOrders, summarizePositions } from '../utils/velvetDashboard';
+import { usePolling } from '../utils/usePolling';
 import { TradeAssistant } from './TradeAssistant';
 import { DataRefreshBadge } from './DataRefreshBadge';
 import { BrokerToggle, Button, Card, EmptyState, KpiCard, Pill, SectionHead, Tabs, formatPct, formatUSD } from './velvet/Primitives';
@@ -17,6 +18,8 @@ interface DashboardProps {
   onNavigate?: (screen: string) => void;
   selectedBrokerId: string;
   setSelectedBrokerId: (id: string) => void;
+  /** True while this screen is the one being displayed; live polling pauses otherwise. */
+  active?: boolean;
 }
 
 type EquityTimeframe = '1D' | '1W' | '1M' | '3M' | '1Y' | 'ALL';
@@ -40,13 +43,15 @@ const demoStrategies = [
   { name: 'Vol Crush Calendar', asset: 'NDX options', status: 'paused', pnl: -120.40, sharpe: 0.32, tone: 'warn' },
 ] as const;
 
-const demoWatchlist = [
-  { symbol: 'AAPL', price: 198.22, change: 1.24, alert: true },
-  { symbol: 'NVDA', price: 921.55, change: 2.91, alert: false },
-  { symbol: 'TSLA', price: 248.04, change: -0.82, alert: false },
-  { symbol: 'SPY', price: 521.10, change: 0.12, alert: false },
-  { symbol: 'QQQ', price: 459.30, change: 0.42, alert: true },
-  { symbol: 'SOXL', price: 37.65, change: -1.44, alert: false },
+// Default watchlist symbols. Prices and daily change are fetched live from
+// Alpaca (POST /alpaca/quotes) and refresh while the dashboard is visible.
+const watchlistSymbols = [
+  { symbol: 'AAPL', alert: true },
+  { symbol: 'NVDA', alert: false },
+  { symbol: 'TSLA', alert: false },
+  { symbol: 'SPY', alert: false },
+  { symbol: 'QQQ', alert: true },
+  { symbol: 'SOXL', alert: false },
 ] as const;
 
 const demoNews = [
@@ -219,7 +224,7 @@ function EquityChart({ data }: { data: EquityDataPoint[] }) {
   );
 }
 
-export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }: DashboardProps) {
+export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId, active = true }: DashboardProps) {
   const [metrics, setMetrics] = useState({ totalEquity: 0, buyingPower: 0, dayChange: 0, dayChangePercent: 0, activeAlerts: 0 });
   const [equityData, setEquityData] = useState<EquityDataPoint[]>([]);
   const [positions, setPositions] = useState<any[]>([]);
@@ -231,6 +236,7 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
+  const [watchlistQuotes, setWatchlistQuotes] = useState<Record<string, any>>({});
 
   useEffect(() => {
     loadDashboardData();
@@ -301,6 +307,23 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
       setIsRefreshing(false);
     }
   };
+
+  const loadWatchlistQuotes = async () => {
+    try {
+      const response = await alpacaAPI.getQuotes(watchlistSymbols.map((item) => item.symbol));
+      const quotes = (response as any)?.quotes || {};
+      if (Object.keys(quotes).length > 0) {
+        setWatchlistQuotes((previous) => ({ ...previous, ...quotes }));
+      }
+    } catch (error) {
+      console.error('Failed to fetch watchlist quotes:', error);
+    }
+  };
+
+  // Keep watchlist prices live: fetch immediately when the dashboard becomes
+  // visible, then refresh every 30 seconds. Polling pauses while the screen
+  // is hidden or the browser tab is in the background.
+  usePolling(loadWatchlistQuotes, 30000, active, true);
 
   const brokerOptions = [
     { id: 'all', label: 'All Brokers', color: 'var(--af-primary)' },
@@ -432,19 +455,28 @@ export function Dashboard({ onNavigate, selectedBrokerId, setSelectedBrokerId }:
 
         <Card pad="none">
           <div className="flex items-center justify-between border-b border-[var(--af-line)] px-4 py-2.5">
-            <h3 className="text-sm font-semibold text-[var(--af-ink)]">Watchlist</h3>
+            <div className="flex items-baseline gap-2">
+              <h3 className="text-sm font-semibold text-[var(--af-ink)]">Watchlist</h3>
+              <span className="text-[10px] text-[var(--af-muted)]">
+                {Object.keys(watchlistQuotes).length > 0 ? 'Live · refreshes every 30s' : 'Fetching live quotes…'}
+              </span>
+            </div>
             <button type="button" className="grid h-5 w-5 place-items-center rounded text-lg font-light leading-none text-[var(--af-muted)] hover:bg-[var(--af-surface-2)]">+</button>
           </div>
-          {demoWatchlist.map((item) => (
-            <div key={item.symbol} className="grid grid-cols-[1fr_auto_auto] items-center gap-2 border-b border-[var(--af-line)] px-4 py-1.5 last:border-b-0">
-              <div className="flex min-w-0 items-center gap-1.5">
-                <p className="truncate text-[12px] font-semibold text-[var(--af-ink)]">{item.symbol}</p>
-                {(item as any).alert && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--af-warn)]" />}
+          {watchlistSymbols.map((item) => {
+            const quote = watchlistQuotes[item.symbol];
+            const hasLiveQuote = Boolean(quote && typeof quote.price === 'number');
+            return (
+              <div key={item.symbol} className="grid grid-cols-[1fr_auto_auto] items-center gap-2 border-b border-[var(--af-line)] px-4 py-1.5 last:border-b-0">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <p className="truncate text-[12px] font-semibold text-[var(--af-ink)]">{item.symbol}</p>
+                  {item.alert && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--af-warn)]" />}
+                </div>
+                <span className="af-num text-xs text-[var(--af-muted)]">{hasLiveQuote ? formatUSD(quote.price) : '—'}</span>
+                <span className={`af-num min-w-[46px] text-right text-xs font-semibold ${hasLiveQuote ? (quote.changePct >= 0 ? 'text-[var(--af-pos)]' : 'text-[var(--af-neg)]') : 'text-[var(--af-muted)]'}`}>{hasLiveQuote ? formatPct(quote.changePct) : '—'}</span>
               </div>
-              <span className="af-num text-xs text-[var(--af-muted)]">{formatUSD(item.price)}</span>
-              <span className={`af-num min-w-[46px] text-right text-xs font-semibold ${item.change >= 0 ? 'text-[var(--af-pos)]' : 'text-[var(--af-neg)]'}`}>{formatPct(item.change)}</span>
-            </div>
-          ))}
+            );
+          })}
         </Card>
 
         <Card pad="none">

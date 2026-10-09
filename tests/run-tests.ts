@@ -9,6 +9,7 @@ import './optionChain.test.ts';
 import './strategyLab.test.ts';
 import './strategyLabRouting.test.ts';
 import './webhookRouteMatching.test.ts';
+import './quoteSnapshot.test.ts';
 import './webhookAlpacaOrders.test.ts';
 import './optionWebhook.test.ts';
 import './optionTicket.test.ts';

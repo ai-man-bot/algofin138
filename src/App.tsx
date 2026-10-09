@@ -272,7 +272,7 @@ export default function App() {
   const renderScreen = (screen: Screen) => {
     switch (screen) {
       case 'dashboard':
-        return <Dashboard onNavigate={setCurrentScreen} selectedBrokerId={selectedBrokerId} setSelectedBrokerId={setSelectedBrokerId} />;
+        return <Dashboard onNavigate={setCurrentScreen} selectedBrokerId={selectedBrokerId} setSelectedBrokerId={setSelectedBrokerId} active={currentScreen === 'dashboard'} />;
       case 'strategy':
         return <StrategyPage onNavigate={setCurrentScreen} active={currentScreen === 'strategy'} />;
       case 'strategy-lab':

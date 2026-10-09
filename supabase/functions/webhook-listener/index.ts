@@ -25,6 +25,7 @@ import {
 } from "../../../src/utils/legacyStrategyRoutes.ts";
 import { buildAlpacaOrderFromWebhookPayload } from "../../../src/utils/webhookAlpacaOrders.ts";
 import { decodeWebhookBody, parseOptionMessage, isOptionMessagePayload } from "../../../src/utils/optionWebhook.ts";
+import { buildAlpacaQuotesResponse, normalizeQuoteSnapshot } from "../../../src/utils/quoteSnapshot.ts";
 import { parseWebhookSignal, signalExecutionGap } from "../../../src/utils/webhookSignal.ts";
 import { storeOptionSignal } from './option_signal_store.ts';
 import { runOptionPlanBatch } from "./option_plan_worker.ts";
@@ -723,6 +724,53 @@ async function handleAlpacaReadRoute(req: Request, url: URL, supabase: any, user
       : jsonResponse(response.data ?? { error: "Failed to fetch portfolio history" }, response.status || 400);
   }
 
+  if (req.method === "GET" && path.match(/\/alpaca\/quote\/[^/]+$/)) {
+    const symbol = decodeURIComponent(path.split("/alpaca/quote/")[1] || "").trim().toUpperCase();
+    if (!symbol) {
+      return jsonResponse({ error: "Missing symbol" }, 400);
+    }
+
+    const { headers, error } = await getBrokerAccountAndHeaders(supabase, userId, brokerAccountId);
+    if (error || !headers) {
+      return jsonResponse({ error: error || "Alpaca not connected" }, 404);
+    }
+
+    const response = await proxyAlpacaJson(
+      `https://data.alpaca.markets/v2/stocks/${encodeURIComponent(symbol)}/snapshot?feed=iex`,
+      headers,
+    );
+    return response.ok
+      ? jsonResponse({ quote: normalizeQuoteSnapshot(symbol, response.data) })
+      : jsonResponse(response.data ?? { error: "Failed to fetch quote" }, response.status || 400);
+  }
+
+  if (path.endsWith("/alpaca/quotes") && req.method === "POST") {
+    const body = await readJson(req);
+    const symbols = (Array.isArray(body?.symbols) ? body.symbols : [])
+      .map((symbol: unknown) => String(symbol ?? "").trim().toUpperCase())
+      .filter(Boolean)
+      .slice(0, 25);
+
+    if (symbols.length === 0) {
+      return jsonResponse({ error: "No symbols provided" }, 400);
+    }
+
+    const { headers, error } = await getBrokerAccountAndHeaders(supabase, userId, brokerAccountId);
+    if (error || !headers) {
+      return jsonResponse({ error: error || "Alpaca not connected" }, 404);
+    }
+
+    const response = await proxyAlpacaJson(
+      `https://data.alpaca.markets/v2/stocks/snapshots?symbols=${symbols.map(encodeURIComponent).join(",")}&feed=iex`,
+      headers,
+    );
+    if (!response.ok) {
+      return jsonResponse(response.data ?? { error: "Failed to fetch quotes" }, response.status || 400);
+    }
+
+    return jsonResponse(buildAlpacaQuotesResponse(response.data?.snapshots));
+  }
+
   return null;
 }
 
@@ -1288,6 +1336,8 @@ Deno.serve(async (req: Request) => {
     path.endsWith("/alpaca/positions") ||
     path.endsWith("/alpaca/orders") ||
     path.endsWith("/alpaca/portfolio-history") ||
+    path.match(/\/alpaca\/quote\/[^/]+$/) ||
+    path.endsWith("/alpaca/quotes") ||
     path.endsWith("/platform-orders/route") ||
     path.match(/\/platform-orders\/[^/]+\/reconcile$/) ||
     path.endsWith("/strategy-automation/schedules") ||
