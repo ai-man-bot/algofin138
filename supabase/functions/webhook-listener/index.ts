@@ -1595,6 +1595,7 @@ Deno.serve(async (req: Request) => {
     path.endsWith("/strategy-automation/schedules") ||
     path.match(/\/strategy-automation\/schedules\/[^/]+$/) ||
     path.endsWith("/strategy-automation/run") ||
+    path.endsWith("/strategy-automation/runs") ||
     path.endsWith("/alpaca/options/contracts") ||
     path.match(/\/alpaca\/options\/chain\/[^/]+$/)
   ) {
