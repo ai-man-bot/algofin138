@@ -32,6 +32,8 @@ import { runOptionPlanBatch } from "./option_plan_worker.ts";
 import { storeOptionPlan, OptionPlanConflict } from './option_plan_store.ts';
 import { handleOptionTicketRoute } from './option_ticket_routes.ts';
 import { handleWebhookManagement } from './webhook_management.ts';
+import { handleStrategyAutomationRoutes } from './strategy_automation_routes.ts';
+import { submitLifecycleOrderToBroker, type BrokerSubmissionResult } from "../../../src/utils/omsBrokerSubmission.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -208,6 +210,101 @@ async function submitAlpacaOrder(
     request: order,
     response: data,
   };
+}
+
+async function lookupAlpacaOrderByClientId(
+  broker: any,
+  headers: Record<string, string>,
+  clientOrderId: string,
+) {
+  const url = `${getBrokerBaseUrl(broker)}/v2/orders:by_client_order_id?client_order_id=${encodeURIComponent(clientOrderId)}`;
+  const response = await fetch(url, { headers });
+  if (!response.ok) return null;
+  return await response.json().catch(() => null);
+}
+
+async function journalOmsExecutionRow(
+  supabase: any,
+  input: {
+    omsOrderId: string;
+    legId?: string | null;
+    brokerOrderId?: string | null;
+    status: string;
+    rawUpdate: Record<string, any>;
+    occurredAt?: string;
+  },
+) {
+  const { error } = await supabase.from("oms_executions").insert({
+    oms_order_id: input.omsOrderId,
+    broker_order_id: input.brokerOrderId ?? null,
+    leg_id: input.legId ?? null,
+    status: input.status,
+    filled_quantity: 0,
+    average_fill_price: 0,
+    raw_update: input.rawUpdate,
+    occurred_at: input.occurredAt ?? new Date().toISOString(),
+  });
+  if (error) {
+    throw new Error(`Failed to journal OMS execution row: ${error.message}`);
+  }
+}
+
+/**
+ * Submit a risk-accepted OMS order to the broker with journal-first idempotency.
+ * The lifecycle order id must already be aligned with the persisted oms_orders
+ * row id so journal rows and the permanent client order id reference the
+ * durable record.
+ */
+async function submitRoutedOmsOrderToBroker(input: {
+  supabase: any;
+  userId: string;
+  brokerAccountId: string | null;
+  omsOrderId: string;
+  order: any;
+}): Promise<BrokerSubmissionResult> {
+  const { broker, headers, error } = await getBrokerAccountAndHeaders(
+    input.supabase,
+    input.userId,
+    input.brokerAccountId,
+  );
+  if (error || !headers || !broker) {
+    return { eligible: false, reason: `Broker credentials unavailable: ${error ?? "unknown error"}` };
+  }
+
+  return submitLifecycleOrderToBroker({
+    order: input.order,
+    deps: {
+      journalAttempt: async (attempt) => {
+        await journalOmsExecutionRow(input.supabase, {
+          omsOrderId: attempt.omsOrderId,
+          legId: attempt.legId,
+          status: "submission_attempted",
+          rawUpdate: {
+            clientOrderId: attempt.clientOrderId,
+            order: attempt.order,
+            attemptedAt: attempt.attemptedAt,
+          },
+          occurredAt: attempt.attemptedAt,
+        });
+      },
+      submitOrder: (order) => submitAlpacaOrder(broker, headers, order),
+      lookupOrderByClientId: (clientOrderId) => lookupAlpacaOrderByClientId(broker, headers, clientOrderId),
+      journalResult: async (record) => {
+        await journalOmsExecutionRow(input.supabase, {
+          omsOrderId: record.omsOrderId,
+          legId: record.legId,
+          brokerOrderId: record.brokerOrderId,
+          status: record.status,
+          rawUpdate: {
+            clientOrderId: record.clientOrderId,
+            httpStatus: record.httpStatus,
+            response: record.response,
+          },
+          occurredAt: record.occurredAt,
+        });
+      },
+    },
+  });
 }
 
 async function getKvValue(supabase: any, key: string) {
@@ -1487,76 +1584,44 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ ok: true, order: data, executions_inserted: updates.length });
     }
 
-    if (path.endsWith("/strategy-automation/schedules") && req.method === "GET") {
-      const { data, error } = await supabase
-        .from("strategy_automation_schedules")
-        .select("*")
-        .eq("user_id", userId)
-        .order("updated_at", { ascending: false });
+    if (
+      path.endsWith("/strategy-automation/schedules") ||
+      path.match(/\/strategy-automation\/schedules\/[^/]+$/) ||
+      path.endsWith("/strategy-automation/run") ||
+      path.endsWith("/strategy-automation/runs")
+    ) {
+      try {
+        const automationResponse = await handleStrategyAutomationRoutes(req, url, {
+          supabase,
+          userId,
+          resolveBrokerAccountId: async (explicitBrokerId) => {
+            if (explicitBrokerId) {
+              return { brokerAccountId: explicitBrokerId, error: null };
+            }
+            const { broker, error } = await getPrimaryBrokerAccount(supabase, userId, null);
+            return { brokerAccountId: broker?.id ?? null, error };
+          },
+          loadBrokerSnapshot: (brokerAccountId) => fetchAlpacaBrokerSnapshot(supabase, userId, brokerAccountId),
+          loadRiskSettings: () => getRiskSettings(supabase, userId),
+          getBrokerForSubmission: (brokerAccountId) => getBrokerAccountAndHeaders(supabase, userId, brokerAccountId),
+          submitOrder: (broker, headers, order) => submitAlpacaOrder(broker, headers, order),
+          lookupOrder: (broker, headers, clientOrderId) => lookupAlpacaOrderByClientId(broker, headers, clientOrderId),
+        });
 
-      if (error) {
-        return jsonResponse({ error: "Failed to load automation schedules", details: error.message }, 500);
+        if (automationResponse) {
+          return jsonResponse(automationResponse.body, automationResponse.status);
+        }
+      } catch (automationError: any) {
+        return jsonResponse(
+          {
+            error: "Strategy automation request failed",
+            details: automationError?.message ?? String(automationError),
+          },
+          500,
+        );
       }
 
-      return jsonResponse(data ?? []);
-    }
-
-    const scheduleMatch = path.match(/\/strategy-automation\/schedules\/([^/]+)$/);
-    if (scheduleMatch && req.method === "PUT") {
-      const strategyId = scheduleMatch[1];
-      const body = await readJson(req);
-      const row = {
-        user_id: userId,
-        strategy_id: strategyId,
-        enabled: Boolean(body.enabled),
-        interval_minutes: Number(body.intervalMinutes ?? body.interval_minutes ?? 15),
-        max_signals_per_run: Number(body.maxSignalsPerRun ?? body.max_signals_per_run ?? 1),
-        min_confidence: Number(body.minConfidence ?? body.min_confidence ?? 0.7),
-        allowed_symbols: Array.isArray(body.allowedSymbols)
-          ? body.allowedSymbols
-          : Array.isArray(body.allowed_symbols)
-            ? body.allowed_symbols
-            : [],
-        updated_at: new Date().toISOString(),
-      };
-
-      const { data, error } = await supabase
-        .from("strategy_automation_schedules")
-        .upsert(row, { onConflict: "user_id,strategy_id" })
-        .select("*")
-        .single();
-
-      if (error) {
-        return jsonResponse({ error: "Failed to save automation schedule", details: error.message }, 500);
-      }
-
-      return jsonResponse({ ok: true, schedule: data });
-    }
-
-    if (path.endsWith("/strategy-automation/run") && req.method === "POST") {
-      const body = await readJson(req);
-      const strategyId = body.strategy_id ?? body.strategyId;
-
-      if (!strategyId) {
-        return jsonResponse({ error: "Missing strategy_id" }, 400);
-      }
-
-      const { data, error } = await supabase
-        .from("strategy_automation_runs")
-        .insert({
-          user_id: userId,
-          strategy_id: strategyId,
-          status: "queued",
-          metadata: body.metadata ?? body,
-        })
-        .select("*")
-        .single();
-
-      if (error) {
-        return jsonResponse({ error: "Failed to queue automation run", details: error.message }, 500);
-      }
-
-      return jsonResponse({ ok: true, run: data });
+      return jsonResponse({ error: "Method not allowed" }, 405);
     }
 
     return jsonResponse({ error: "Method not allowed" }, 405);
@@ -1845,6 +1910,43 @@ Deno.serve(async (req: Request) => {
         throw new Error(`Failed to persist OMS order: ${orderError.message}`);
       }
 
+      // Route-level opt-in broker execution. auto_execute defaults to false, so
+      // existing routes keep their OMS-recorded behavior until explicitly enabled.
+      let brokerSubmission: BrokerSubmissionResult | null = null;
+      if (route.auto_execute === true && routed.riskDecision.status !== "block") {
+        routed.order.id = orderRow.id;
+        brokerSubmission = await submitRoutedOmsOrderToBroker({
+          supabase,
+          userId: route.user_id,
+          brokerAccountId: route.broker_account_id ?? null,
+          omsOrderId: orderRow.id,
+          order: routed.order,
+        }).catch((submissionError: any) => ({
+          eligible: false,
+          reason: submissionError?.message ?? "Broker submission status unknown; verify with the broker before any manual retry",
+        }));
+      }
+
+      const brokerSubmissionRecord: {
+        status: string;
+        brokerOrderId: string | null;
+        clientOrderId: string;
+        reason?: string;
+      } | null = brokerSubmission
+        ? brokerSubmission.eligible
+          ? {
+              status: brokerSubmission.status,
+              brokerOrderId: brokerSubmission.brokerOrderId,
+              clientOrderId: brokerSubmission.clientOrderId,
+            }
+          : {
+              status: "skipped",
+              brokerOrderId: null,
+              clientOrderId: `oms-${orderRow.id}`,
+              reason: brokerSubmission.reason,
+            }
+        : null;
+
       if (insertedEvent?.id) {
         const { error: eventUpdateError } = await supabase
           .from("webhook_events")
@@ -1854,6 +1956,7 @@ Deno.serve(async (req: Request) => {
             auditRecordId: auditRow.id,
             riskDecision: routed.riskDecision,
             exportId: latestExport?.id ?? null,
+            brokerSubmission: brokerSubmissionRecord,
           }))
           .eq("id", insertedEvent.id);
 
@@ -1861,6 +1964,18 @@ Deno.serve(async (req: Request) => {
           console.error("webhook_events routing update failed:", eventUpdateError);
         }
       }
+
+      const message = routed.riskDecision.status === "block"
+        ? "Webhook received and blocked by risk controls."
+        : brokerSubmissionRecord
+          ? brokerSubmissionRecord.status === "submitted" || brokerSubmissionRecord.status === "already_submitted"
+            ? "Webhook received, routed through OMS, and submitted to the broker."
+            : brokerSubmissionRecord.status === "broker_rejected"
+              ? "Webhook received and routed through OMS. The broker rejected the order."
+              : brokerSubmissionRecord.status === "submission_uncertain"
+                ? "Webhook received and routed through OMS. Broker submission status is uncertain; it will not be re-sent blindly."
+                : `Webhook received and routed through OMS. Broker submission skipped: ${brokerSubmissionRecord.reason ?? "order not eligible"}.`
+          : "Webhook received and routed through OMS.";
 
       const response = {
         ok: true,
@@ -1871,13 +1986,17 @@ Deno.serve(async (req: Request) => {
           riskDecision: routed.riskDecision,
           auditRecord: auditRow,
           exportRecordId: latestExport?.id ?? null,
+          broker_submission: brokerSubmissionRecord,
         },
-        message: routed.riskDecision.status === "block"
-          ? "Webhook received and blocked by risk controls."
-          : "Webhook received and routed through OMS.",
+        message,
       };
+      const logStatus = routed.riskDecision.status === "block"
+        ? "blocked"
+        : brokerSubmissionRecord
+          ? brokerSubmissionRecord.status
+          : "accepted";
       await updateWebhookOrderRequestLog(supabase, requestLog?.id, {
-        status: routed.riskDecision.status === "block" ? "blocked" : "accepted",
+        status: logStatus,
         httpStatus: 200,
         response,
         route,

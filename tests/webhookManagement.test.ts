@@ -65,6 +65,7 @@ const request = (path: string, method = 'GET', body?: any) => {
 };
 const list = await request('');
 assert.equal(list.status, 200); assert.equal(list.body.length, 1); assert.equal(list.body[0].broker_id, 'paper-1');
+assert.equal(list.body[0].auto_execute, false, 'routes default to no automatic execution');
 assert.ok(!JSON.stringify(list).includes('foreign-secret'));
 assert.equal((await request(`/${foreign}`, 'DELETE')).status, 404);
 assert.equal((await request(`/${foreign}`, 'PUT', {})).status, 404);
@@ -117,7 +118,13 @@ assert.equal((await request('', 'POST', { ...input, broker_id:'paper-2' })).stat
 assert.equal((await request('', 'POST', { ...input, environment:'live' })).status,409);
 assert.equal((await request('', 'POST', input)).status,201);
 assert.equal(tables.webhook_routes.at(-1).user_id,'alice');
+assert.equal(tables.webhook_routes.at(-1).auto_execute, false, 'new routes default to no automatic execution');
+assert.equal((await request('', 'POST', { ...input, name: 'Auto route', auto_execute: true })).status, 201);
+assert.equal(tables.webhook_routes.at(-1).auto_execute, true, 'auto_execute persists on create');
+assert.equal((await request(`/${owned}`, 'PUT', {...input,name:'Updated',auto_execute:true})).status,200);
+assert.equal(tables.webhook_routes[0].auto_execute, true, 'auto_execute persists on edit');
 assert.equal((await request(`/${owned}`, 'PUT', {...input,name:'Updated'})).status,200);
+assert.equal(tables.webhook_routes[0].auto_execute, false, 'omitting auto_execute clears the opt-in; clients must round-trip it');
 assert.equal(tables.webhook_routes[0].token,'keep-private'); assert.equal(tables.webhook_routes[0].strategy_id,'existing-strategy');
 assert.equal((await request(`/${owned}`, 'PUT', {...input,status:'inactive'})).status,200); assert.equal(tables.webhook_routes[0].status,'inactive');
 assert.equal(tables.option_trade_plans.length,beforePlans,'deactivation preserves existing plans');

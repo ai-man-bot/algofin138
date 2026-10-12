@@ -81,3 +81,5 @@ assert.equal(typeof advancedMetrics.dailyVaR, 'number');
 console.log('tradeAnalytics tests passed');
 
 import './webhookManagement.test.ts';
+import './omsBrokerSubmission.test.ts';
+import './strategyAutomationLoop.test.ts';

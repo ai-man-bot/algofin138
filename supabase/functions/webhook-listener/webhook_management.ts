@@ -79,6 +79,7 @@ export async function handleWebhookManagement(req: Request, url: URL, deps: {
         return { id: item.id, name: item.name || 'Webhook', status: item.status, strategyId: item.strategy_id,
           broker_id: item.broker_account_id, environment: broker?.base_url?.includes('paper-api') ? 'paper' : broker?.base_url === 'https://api.alpaca.markets' ? 'live' : null,
           connection_error: !broker?.connected ? 'Select a connected account using Edit webhook.' : null,
+          auto_execute: item.auto_execute === true,
           url: `${deps.baseUrl}?token=${encodeURIComponent(item.token)}`, triggers: item.triggers ?? 0,
           lastTriggered: item.last_triggered, createdAt: item.created_at };
       }));
@@ -154,7 +155,7 @@ export async function handleWebhookManagement(req: Request, url: URL, deps: {
     const environment = base === 'https://paper-api.alpaca.markets' ? 'paper' : base === 'https://api.alpaca.markets' ? 'live' : null;
     if (!environment || body.environment !== environment) return respond({ error: 'Account environment changed; review the account again' }, 409);
     if (!['active', 'inactive'].includes(body.status)) return respond({ error: 'Status must be active or inactive' }, 400);
-    const values: any = { name: body.name.trim(), broker_account_id: connection.broker.id, broker_type: 'alpaca', status: body.status, updated_at: new Date().toISOString() };
+    const values: any = { name: body.name.trim(), broker_account_id: connection.broker.id, broker_type: 'alpaca', status: body.status, auto_execute: body.auto_execute === true, updated_at: new Date().toISOString() };
     // Existing strategy associations and tokens are preserved when reconnecting an account.
     const query = route
       ? db.from('webhook_routes').update(values).eq('id', id).eq('user_id', userId)

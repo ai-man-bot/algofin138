@@ -184,13 +184,27 @@ export function buildWebhookEventStatusUpdate(input: {
   auditRecordId?: string | null;
   riskDecision?: RiskDecision | null;
   exportId?: string | null;
+  brokerSubmission?: {
+    status: string;
+    brokerOrderId: string | null;
+    clientOrderId: string;
+    reason?: string;
+  } | null;
 }) {
+  const summary = input.riskDecision?.summary ?? null;
   return {
     status: input.status,
     order_id: input.orderId ?? null,
     risk_audit_record_id: input.auditRecordId ?? null,
     strategy_lab_export_id: input.exportId ?? null,
-    decision_summary: input.riskDecision?.summary ?? null,
-    decision_payload: input.riskDecision ?? null,
+    decision_summary: input.brokerSubmission
+      ? `${summary ?? 'Risk evaluated'}. Broker submission: ${input.brokerSubmission.status}${input.brokerSubmission.reason ? ` (${input.brokerSubmission.reason})` : ''}.`
+      : summary,
+    decision_payload: input.brokerSubmission
+      ? {
+          riskDecision: input.riskDecision ?? null,
+          brokerSubmission: input.brokerSubmission,
+        }
+      : input.riskDecision ?? null,
   };
 }
