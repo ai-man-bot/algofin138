@@ -1,0 +1,15 @@
+{
+  "base_url": "https://dzboqhobrmzglyuofcyk.supabase.co/functions/v1/webhook-listener",
+  "access_token": "PASTE_YOUR_SUPABASE_ACCESS_TOKEN",
+  "strategy_id": "PASTE_YOUR_STRATEGY_UUID",
+  "broker_id": null,
+  "auto_execute": false,
+  "interval_minutes": 60,
+  "symbols": ["AAPL", "MSFT"],
+  "quantity": 10,
+  "order_type": "market",
+  "rsi_length": 14,
+  "rsi_oversold": 30,
+  "bars_period": "1y",
+  "bars_timeframe": "1D"
+}
