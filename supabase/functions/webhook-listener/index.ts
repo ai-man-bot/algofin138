@@ -1238,7 +1238,7 @@ async function executeEquitySignalFromInstruction(input: {
     brokerAccountId: input.brokerAccountId,
     omsOrderId: orderRow.id,
     order: routed.order,
-  }).catch((submissionError: any) => ({
+  }).catch((submissionError: any): BrokerSubmissionResult => ({
     eligible: false,
     reason: submissionError?.message ?? 'Broker submission status unknown; verify with the broker before any manual retry',
   }));
@@ -2076,7 +2076,7 @@ Deno.serve(async (req: Request) => {
           brokerAccountId: route.broker_account_id ?? null,
           omsOrderId: orderRow.id,
           order: routed.order,
-        }).catch((submissionError: any) => ({
+        }).catch((submissionError: any): BrokerSubmissionResult => ({
           eligible: false,
           reason: submissionError?.message ?? "Broker submission status unknown; verify with the broker before any manual retry",
         }));
