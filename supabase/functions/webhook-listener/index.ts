@@ -1150,11 +1150,140 @@ function runWebhookBackgroundTask(task: () => Promise<void>) {
   }
 }
 
+/**
+ * Execute an equity BTO message through the shared risk gate.
+ *
+ * Only invoked for routes with auto_execute enabled and a configured default
+ * share quantity. Entry only: the first target from the message is recorded in
+ * order metadata but is not placed or managed (no equity plan worker exists
+ * yet). Returns null when preconditions fail so the caller keeps its explicit
+ * needs_configuration response.
+ */
+async function executeEquitySignalFromInstruction(input: {
+  supabase: any;
+  req: Request;
+  payload: any;
+  userId: string;
+  brokerAccountId: string | null;
+  strategyId: string | null;
+  instruction: any;
+  route: any;
+  requestLogId?: string | null;
+}): Promise<Response | null> {
+  const { supabase, userId, instruction, route } = input;
+  const quantity = Number(route?.equity_order_quantity);
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100000) return null;
+  const entryPrice = Number(instruction?.reference_price);
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0) return null;
+  if (!instruction?.underlying) return null;
+
+  const signal: any = {
+    strategyId: input.strategyId ?? undefined,
+    symbol: String(instruction.underlying).toUpperCase(),
+    assetClass: 'equity',
+    side: 'buy',
+    quantity,
+    orderType: 'limit',
+    timeInForce: 'day',
+    limitPrice: entryPrice,
+    signalSource: 'webhook',
+    generatedAt: new Date().toISOString(),
+    metadata: {
+      message: input.payload?.message ?? null,
+      first_target_price: instruction.target_price ?? null,
+      execution_mode: 'route_equity_default_quantity',
+    },
+  };
+
+  const [{ snapshot, error: snapshotError }, riskSettings] = await Promise.all([
+    fetchAlpacaBrokerSnapshot(supabase, userId, input.brokerAccountId),
+    getRiskSettings(supabase, userId),
+  ]);
+  if (snapshotError || !snapshot) {
+    throw new Error(snapshotError || 'Failed to load broker snapshot');
+  }
+
+  const routed = createOrderLifecycleFromSignal({
+    signal,
+    broker: snapshot.connection,
+    userId,
+    account: snapshot.account,
+    positions: snapshot.positions,
+    openOrders: snapshot.openOrders,
+    riskSettings,
+  });
+
+  const { data: auditRow, error: auditError } = await supabase
+    .from('risk_audit_records')
+    .insert(buildRiskAuditInsertRow(routed.auditRecord))
+    .select('*')
+    .single();
+  if (auditError) {
+    throw new Error(`Failed to persist risk audit record: ${auditError.message}`);
+  }
+
+  const { data: orderRow, error: orderError } = await supabase
+    .from('oms_orders')
+    .insert(buildOmsOrderInsertRow(userId, routed.order))
+    .select('*')
+    .single();
+  if (orderError) {
+    throw new Error(`Failed to persist OMS order: ${orderError.message}`);
+  }
+
+  routed.order.id = orderRow.id;
+  const brokerSubmission = await submitRoutedOmsOrderToBroker({
+    supabase,
+    userId,
+    brokerAccountId: input.brokerAccountId,
+    omsOrderId: orderRow.id,
+    order: routed.order,
+  }).catch((submissionError: any) => ({
+    eligible: false,
+    reason: submissionError?.message ?? 'Broker submission status unknown; verify with the broker before any manual retry',
+  }));
+
+  const riskBlocked = routed.riskDecision.status === 'block';
+  const brokerSubmissionRecord = brokerSubmission
+    ? brokerSubmission.eligible
+      ? { status: brokerSubmission.status, brokerOrderId: brokerSubmission.brokerOrderId, clientOrderId: brokerSubmission.clientOrderId }
+      : { status: 'skipped', brokerOrderId: null, clientOrderId: `oms-${orderRow.id}`, reason: brokerSubmission.reason }
+    : null;
+
+  const response = {
+    ok: !riskBlocked,
+    routing: {
+      status: riskBlocked ? 'blocked' : 'accepted',
+      order: orderRow,
+      riskDecision: routed.riskDecision,
+      auditRecord: auditRow,
+      broker_submission: brokerSubmissionRecord,
+    },
+    message: riskBlocked
+      ? 'Equity entry received and blocked by risk controls.'
+      : brokerSubmissionRecord && (brokerSubmissionRecord.status === 'submitted' || brokerSubmissionRecord.status === 'already_submitted')
+        ? 'Equity entry routed through risk and submitted to the broker. The first target from the message is recorded but not managed automatically.'
+        : `Equity entry routed through risk and recorded. Broker submission skipped: ${brokerSubmissionRecord?.reason ?? 'order not eligible'}.`,
+  };
+  await updateWebhookOrderRequestLog(supabase, input.requestLogId, {
+    status: riskBlocked
+      ? 'blocked'
+      : brokerSubmissionRecord
+        ? brokerSubmissionRecord.status
+        : 'accepted',
+    httpStatus: 200,
+    response,
+    route,
+  });
+  return jsonResponse(response);
+}
+
 async function receiveOptionMessage(req: Request, supabase: any, payload: any, token: string, legacyStrategyId: string | null, requestLogId?: string) {
   try {
     let userId: string;
     let brokerId: string | null = null;
     let strategyId: string | null = legacyStrategyId;
+    let tokenizedRoute: any = null;
     let scope: string;
     let logRoute: any;
     if (legacyStrategyId) {
@@ -1173,6 +1302,7 @@ async function receiveOptionMessage(req: Request, supabase: any, payload: any, t
       strategyId = route.strategy_id;
       scope = `route:${route.id}`;
       logRoute = route;
+      tokenizedRoute = route;
     }
     await updateWebhookOrderRequestLog(supabase, requestLogId, { status: 'option_route_matched', httpStatus: 202, route: logRoute });
     const conflicting = ['symbol', 'side', 'action', 'qty', 'quantity', 'type', 'order_type', 'orderType',
@@ -1180,8 +1310,33 @@ async function receiveOptionMessage(req: Request, supabase: any, payload: any, t
     if (conflicting.some(key => payload[key] !== undefined)) return jsonResponse({ error: 'Option messages cannot include separate order fields' }, 400);
     const instruction = parseWebhookSignal(payload.message);
     const gap = signalExecutionGap(instruction);
-    if (gap) return jsonResponse({ ok: false, instruction,
-      status: instruction.action === 'incomplete_close' ? 'needs_review' : 'needs_configuration', error: gap }, 409);
+    if (gap) {
+      // Equity BTO entries can execute when the route opts in to auto execution
+      // and carries a default share quantity. Everything else keeps the explicit
+      // needs_configuration response; no sizing guesswork ever happens here.
+      if (
+        instruction.asset === 'equity' &&
+        instruction.action === 'open' &&
+        tokenizedRoute?.auto_execute === true &&
+        Number.isInteger(Number(tokenizedRoute?.equity_order_quantity)) &&
+        Number(tokenizedRoute.equity_order_quantity) >= 1
+      ) {
+        const equityResponse = await executeEquitySignalFromInstruction({
+          supabase,
+          req,
+          payload,
+          userId,
+          brokerAccountId: brokerId,
+          strategyId,
+          instruction,
+          route: tokenizedRoute,
+          requestLogId,
+        });
+        if (equityResponse) return equityResponse;
+      }
+      return jsonResponse({ ok: false, instruction,
+        status: instruction.action === 'incomplete_close' ? 'needs_review' : 'needs_configuration', error: gap }, 409);
+    }
     // No order can be accepted until the persistent worker has been configured.
     if (!Deno.env.get('OPTION_WORKER_SECRET')) return jsonResponse({ error: 'Option worker is not configured' }, 503);
     const ready = await supabase.rpc('option_worker_ready', {

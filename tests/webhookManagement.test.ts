@@ -125,6 +125,11 @@ assert.equal((await request(`/${owned}`, 'PUT', {...input,name:'Updated',auto_ex
 assert.equal(tables.webhook_routes[0].auto_execute, true, 'auto_execute persists on edit');
 assert.equal((await request(`/${owned}`, 'PUT', {...input,name:'Updated'})).status,200);
 assert.equal(tables.webhook_routes[0].auto_execute, false, 'omitting auto_execute clears the opt-in; clients must round-trip it');
+assert.equal((await request('', 'POST', { ...input, name: 'Equity route', auto_execute: true, equity_order_quantity: 100 })).status, 201);
+assert.equal(tables.webhook_routes.at(-1).equity_order_quantity, 100, 'equity default size persists on create');
+assert.equal((await request(`/${owned}`, 'PUT', { ...input, name: 'Updated', auto_execute: true, equity_order_quantity: 250 })).status, 200);
+assert.equal(tables.webhook_routes[0].equity_order_quantity, 250, 'equity default size persists on edit');
+assert.equal((await request(`/${owned}`, 'PUT', { ...input, name: 'Updated', equity_order_quantity: 1.5 })).status, 400, 'fractional equity sizes are rejected');
 assert.equal(tables.webhook_routes[0].token,'keep-private'); assert.equal(tables.webhook_routes[0].strategy_id,'existing-strategy');
 assert.equal((await request(`/${owned}`, 'PUT', {...input,status:'inactive'})).status,200); assert.equal(tables.webhook_routes[0].status,'inactive');
 assert.equal(tables.option_trade_plans.length,beforePlans,'deactivation preserves existing plans');

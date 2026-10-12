@@ -39,7 +39,7 @@ export async function handleOptionTicketRoute(req: Request, url: URL, deps: {
     if (!await deps.workerReady()) return respond({ error: 'Option reconciliation worker is unavailable' }, 503);
     const { plan, duplicate } = await storeOptionPlan(supabase, {
       parsed, userId, brokerId: broker.id, baseUrl, scope: `manual:${userId}`,
-      message: typeof body.message === 'string' ? body.message : JSON.stringify({ symbol: parsed.symbol, entry_price: parsed.entry_price, target_price: parsed.target_price }),
+      message: typeof body.message === 'string' ? body.message : JSON.stringify({ symbol: parsed.symbol, entry_price: parsed.entry_price, target_price: parsed.target_price, quantity: parsed.quantity, target_quantity: parsed.target_quantity }),
       eventId: body.request_id,
     });
     deps.enqueue(plan.id);

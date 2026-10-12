@@ -9,6 +9,27 @@ assert.equal(parsed.symbol, 'PLTR270522C00150000');
 assert.equal(parsed.expiration, '2027-05-22');
 assert.equal(parsed.entry_price, '6.65');
 assert.equal(parsed.target_quantity, 1);
+assert.equal(parseOptionMessage(message, now, { quantity: 5, targetQuantity: 2 }).quantity, 5);
+assert.equal(parseOptionMessage(message, now, { quantity: 5, targetQuantity: 2 }).target_quantity, 2);
+assert.throws(() => parseOptionMessage(message, now, { quantity: 0 }), /quantity must be/);
+assert.throws(() => parseOptionMessage(message, now, { quantity: 2.5 }), /quantity must be/);
+assert.throws(() => parseOptionMessage(message, now, { quantity: 1001 }), /quantity must be/);
+assert.throws(() => parseOptionMessage(message, now, { quantity: 5, targetQuantity: 6 }), /target_quantity must be/);
+assert.equal(optionOrder(parsed, 'entry').qty, '3', 'default entry size stays 3 without explicit sizing');
+assert.equal(optionOrder(parsed, 'target').qty, '1', 'default first-target size stays 1 without explicit sizing');
+const sizedOrder = { ...parsed, quantity: 5, target_quantity: 2 };
+assert.equal(optionOrder(sizedOrder, 'entry').qty, '5');
+assert.equal(optionOrder(sizedOrder, 'target').qty, '2');
+assert.notEqual(
+  await optionDeliveryKey('route', { ...parsed, quantity: 5 }, undefined, now),
+  await optionDeliveryKey('route', parsed, undefined, now),
+  'non-default quantities are distinct deliveries',
+);
+assert.equal(
+  await optionDeliveryKey('route', { ...parsed, quantity: 3, target_quantity: 1 }, undefined, now),
+  await optionDeliveryKey('route', parsed, undefined, now),
+  'default sizing keeps the historical delivery key for in-flight dedupe',
+);
 assert.equal(parseOptionMessage('pltr 190.5p 10/16: bto at $6.65 with first target at $7.65', now).symbol, 'PLTR261016P00190500');
 assert.equal(parseOptionMessage(message, new Date('2026-05-23T01:00:00Z')).expiration, '2026-05-22');
 assert.throws(() => parseOptionMessage(message.replace('5/22', '2/30'), now), /Invalid expiration/);

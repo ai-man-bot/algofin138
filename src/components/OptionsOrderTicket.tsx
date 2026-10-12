@@ -28,6 +28,8 @@ export function OptionsOrderTicket({ active = true }: { active?: boolean }) {
   const [symbol, setSymbol] = useState('');
   const [entry, setEntry] = useState('');
   const [target, setTarget] = useState('');
+  const [quantity, setQuantity] = useState('3');
+  const [targetQty, setTargetQty] = useState('1');
   const [loadingChain, setLoadingChain] = useState(false);
   const [chainNote, setChainNote] = useState('');
   const [error, setError] = useState('');
@@ -112,7 +114,7 @@ export function OptionsOrderTicket({ active = true }: { active?: boolean }) {
     setError(''); setReviewing(true);
     try {
       if (mode === 'chain' && (!selected || !selected.tradable)) throw new Error('Select a tradable contract from the fetched chain');
-      const input = mode === 'message' ? { message } : { symbol, entry_price: entry, target_price: target };
+      const input = mode === 'message' ? { message, quantity, target_quantity: targetQty } : { symbol, entry_price: entry, target_price: target, quantity, target_quantity: targetQty };
       normalizeOptionTicket(input);
       const result = await optionPlansAPI.preview({ ...input, broker_id: brokerId, environment });
       if (version === editVersion.current) setReview({ ...result, request_id: crypto.randomUUID() });
@@ -128,7 +130,8 @@ export function OptionsOrderTicket({ active = true }: { active?: boolean }) {
       setAttempted(true);
       const result = await optionPlansAPI.submit({
         symbol: review.instruction.symbol, entry_price: review.instruction.entry_price,
-        target_price: review.instruction.target_price, broker_id: review.broker_id,
+        target_price: review.instruction.target_price, quantity: review.instruction.quantity,
+        target_quantity: review.instruction.target_quantity, broker_id: review.broker_id,
         environment: review.environment, request_id: review.request_id,
       });
       setSubmittedId(result.plan.id); sessionStorage.removeItem(storageKey);
@@ -148,7 +151,7 @@ export function OptionsOrderTicket({ active = true }: { active?: boolean }) {
   return <div className="option-ticket space-y-6">
     <div className={panel}>
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-        <div><h3 className="text-lg font-semibold text-slate-100">Options order ticket</h3><p className="mt-1 text-sm text-slate-400">Buy 3 contracts. Take the first target on 1 contract.</p></div>
+        <div><h3 className="text-lg font-semibold text-slate-100">Options order ticket</h3><p className="mt-1 text-sm text-slate-400">Buy to open your chosen size; the first target sells your chosen amount (default 3 in, 1 out).</p></div>
         <span className={`rounded-full px-3 py-1 text-xs font-semibold ${environment === 'live' ? 'bg-amber-500/20 text-amber-300' : 'bg-blue-500/15 text-blue-300'}`}>{environment ? `${environment.toUpperCase()} ACCOUNT` : 'SELECT AN ACCOUNT'}</span>
       </div>
       <label className="block max-w-xl text-sm text-slate-300">Alpaca account
@@ -177,6 +180,8 @@ export function OptionsOrderTicket({ active = true }: { active?: boolean }) {
           {chainNote && <p className="text-xs text-slate-400">{chainNote}</p>}
           <div className="grid gap-4 sm:grid-cols-2"><label className="text-sm text-slate-300">Entry limit price ($)<input className={`${field} mt-2`} inputMode="decimal" value={entry} onChange={event => { edit(); setEntry(event.target.value); }} /></label><label className="text-sm text-slate-300">First target price ($)<input className={`${field} mt-2`} inputMode="decimal" value={target} onChange={event => { edit(); setTarget(event.target.value); }} /></label></div>
         </div>}
+        <div className="grid gap-4 sm:grid-cols-2"><label className="text-sm text-slate-300">Entry contracts<input className={`${field} mt-2`} inputMode="numeric" value={quantity} onChange={event => { edit(); setQuantity(event.target.value); }} /></label><label className="text-sm text-slate-300">First target contracts<input className={`${field} mt-2`} inputMode="numeric" value={targetQty} onChange={event => { edit(); setTargetQty(event.target.value); }} /></label></div>
+        <p className="text-xs text-slate-400">Whole numbers between 1 and 1000. First-target size cannot exceed entry size. Leave the defaults for the documented 3-in / 1-out flow.</p>
       </fieldset>
       {!attempted && <button type="button" className={`${button} mt-4`} disabled={!environment || reviewing || loadingChain} onClick={reviewTicket}>{reviewing ? 'Validating contract…' : 'Review order'}</button>}
       {error && <p role="alert" className="mt-4 rounded-lg bg-rose-500/10 p-3 text-sm text-rose-300">{error}</p>}
@@ -186,18 +191,18 @@ export function OptionsOrderTicket({ active = true }: { active?: boolean }) {
       <p className="mt-2 font-mono text-blue-300">{review.instruction.symbol}</p>
       <dl className="mt-4 grid gap-4 text-sm sm:grid-cols-3">
         <div><dt className="text-slate-400">Expiration</dt><dd className="text-slate-100">{review.instruction.expiration}</dd></div>
-        <div><dt className="text-slate-400">Entry · DAY limit</dt><dd className="text-slate-100">Buy to open 3 @ ${review.instruction.entry_price}</dd></div>
-        <div><dt className="text-slate-400">First target · GTC limit</dt><dd className="text-slate-100">Sell to close 1 @ ${review.instruction.target_price}</dd></div>
-        <div><dt className="text-slate-400">Entry premium at limit</dt><dd className="text-slate-100">{money(Number(review.instruction.entry_price) * 3 * review.contract_size)} before fees</dd></div>
+        <div><dt className="text-slate-400">Entry · DAY limit</dt><dd className="text-slate-100">Buy to open {review.instruction.quantity} @ ${review.instruction.entry_price}</dd></div>
+        <div><dt className="text-slate-400">First target · GTC limit</dt><dd className="text-slate-100">Sell to close {review.instruction.target_quantity} @ ${review.instruction.target_price}</dd></div>
+        <div><dt className="text-slate-400">Entry premium at limit</dt><dd className="text-slate-100">{money(Number(review.instruction.entry_price) * Number(review.instruction.quantity) * review.contract_size)} before fees</dd></div>
       </dl>
-      <p className="mt-4 text-sm text-slate-400">The target is submitted after at least one entry contract fills. Two contracts remain only after all three entry contracts and the first target fill. Outside market hours, accepted orders await an eligible session; limit prices do not guarantee a fill.</p>
+      <p className="mt-4 text-sm text-slate-400">The target is submitted after at least one entry contract fills. Remaining contracts are reconciled from broker fills. Outside market hours, accepted orders await an eligible session; limit prices do not guarantee a fill.</p>
       {submittedId ? <div role="status" className="mt-4 text-sm text-emerald-300"><p>Plan received: {submittedId}. This is not a fill confirmation.</p><button type="button" className={`${button} mt-3`} onClick={() => { setAttempted(false); setSubmittedId(''); setReview(null); setMessage(''); setEntry(''); setTarget(''); }}>Start another ticket</button></div> : <button type="button" className={`${button} mt-4`} disabled={submitting} onClick={submit}>{submitting ? 'Submitting…' : attempted ? 'Retry same submission' : `Submit ${review.environment} order`}</button>}
     </div>}
     <div className={panel}>
       <div className="flex items-center justify-between gap-3"><h3 className="text-lg font-semibold text-slate-100">Option plans</h3><button type="button" className={button} disabled={!brokerId} onClick={() => setRefresh(value => value + 1)}>Refresh plans</button></div>
       <p className="mt-1 text-xs text-slate-400">Latest 50 plans for this account, including webhook messages. Updates every 10 seconds while visible.</p>
       {historyError && <p role="alert" className="mt-3 text-rose-300">{historyError}</p>}
-      {!plans.length ? <p className="mt-4 text-sm text-slate-400">{brokerId ? 'No option plans loaded.' : 'Select an account to view its plans.'}</p> : <ul className="mt-4 space-y-3">{plans.map(plan => <li key={plan.id} className="rounded-lg border border-slate-700 p-4 text-sm"><div className="flex flex-wrap justify-between gap-2"><span className="font-mono text-slate-100">{plan.symbol}</span><span className={plan.status === 'needs_attention' || plan.status === 'entry_terminal' ? 'text-amber-300' : 'text-blue-300'}>{managedPlanLabel(plan)}</span></div><p className="mt-2 text-slate-300">Entry ${Number(plan.entry_price).toFixed(2)} · Filled {Number(plan.entry_filled_qty)} / 3 · Target ${Number(plan.target_price).toFixed(2)} · Filled {Number(plan.target_filled_qty)} / 1 · Other exit fills {Number(plan.management?.exit_filled_qty || 0)} · Stop {plan.management?.stop_price ? `$${Number(plan.management.stop_price).toFixed(2)}` : '—'} · Remaining {Math.max(0, Number(plan.entry_filled_qty) - Number(plan.target_filled_qty) - Number(plan.management?.exit_filled_qty || 0))}</p><p className="mt-1 break-all text-xs text-slate-500">Plan {plan.id} · {new Date(plan.created_at).toLocaleString()}{plan.entry_order_id ? ` · Entry order ${plan.entry_order_id}` : ''}{plan.target_order_id ? ` · Target order ${plan.target_order_id}` : ''}</p>{plan.last_error && <p className="mt-2 text-amber-300">{plan.last_error}</p>}</li>)}</ul>}
+      {!plans.length ? <p className="mt-4 text-sm text-slate-400">{brokerId ? 'No option plans loaded.' : 'Select an account to view its plans.'}</p> : <ul className="mt-4 space-y-3">{plans.map(plan => <li key={plan.id} className="rounded-lg border border-slate-700 p-4 text-sm"><div className="flex flex-wrap justify-between gap-2"><span className="font-mono text-slate-100">{plan.symbol}</span><span className={plan.status === 'needs_attention' || plan.status === 'entry_terminal' ? 'text-amber-300' : 'text-blue-300'}>{managedPlanLabel(plan)}</span></div><p className="mt-2 text-slate-300">Entry ${Number(plan.entry_price).toFixed(2)} · Filled {Number(plan.entry_filled_qty)} / {Number(plan.quantity)} · Target ${Number(plan.target_price).toFixed(2)} · Filled {Number(plan.target_filled_qty)} / {Number(plan.target_quantity)} · Other exit fills {Number(plan.management?.exit_filled_qty || 0)} · Stop {plan.management?.stop_price ? `$${Number(plan.management.stop_price).toFixed(2)}` : '—'} · Remaining {Math.max(0, Number(plan.entry_filled_qty) - Number(plan.target_filled_qty) - Number(plan.management?.exit_filled_qty || 0))}</p><p className="mt-1 break-all text-xs text-slate-500">Plan {plan.id} · {new Date(plan.created_at).toLocaleString()}{plan.entry_order_id ? ` · Entry order ${plan.entry_order_id}` : ''}{plan.target_order_id ? ` · Target order ${plan.target_order_id}` : ''}</p>{plan.last_error && <p className="mt-2 text-amber-300">{plan.last_error}</p>}</li>)}</ul>}
     </div>
   </div>;
 }

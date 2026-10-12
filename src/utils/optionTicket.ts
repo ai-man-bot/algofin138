@@ -1,4 +1,4 @@
-import { marketDate, parseOptionMessage } from './optionWebhook.ts';
+import { marketDate, parseOptionMessage, normalizeOptionEntryQuantity, normalizeOptionTargetQuantity } from './optionWebhook.ts';
 
 export type OptionInstruction = ReturnType<typeof parseOptionMessage>;
 export type OptionTicketInput = { message: string } | { symbol: string; entry_price: string; target_price: string };
@@ -11,11 +11,14 @@ export type OptionPlan = OptionInstruction & {
 };
 
 export function normalizeOptionTicket(input: Record<string, unknown>, now = new Date()): OptionInstruction {
-  const unsupported = ['qty', 'quantity', 'side', 'action', 'type', 'order_type', 'time_in_force', 'target_quantity', 'position_intent'];
-  if (unsupported.some(key => input[key] !== undefined)) throw new Error('The ticket uses 3 BTO contracts and one GTC target; custom order instructions are not supported');
+  // Side, order type, time in force, and position intent stay fixed by the
+  // managed policy. Entry and first-target quantities are configurable.
+  const unsupported = ['qty', 'side', 'action', 'type', 'order_type', 'time_in_force', 'position_intent'];
+  if (unsupported.some(key => input[key] !== undefined)) throw new Error('The ticket uses a fixed BTO entry and one GTC first target; custom side, order type, or time in force is not supported');
+  const sizing = { quantity: input.quantity, targetQuantity: input.target_quantity };
   if (input.message !== undefined) {
     if (['symbol', 'entry_price', 'target_price'].some(key => input[key] !== undefined)) throw new Error('Use either a message or contract fields');
-    return parseOptionMessage(input.message, now);
+    return parseOptionMessage(input.message, now, sizing);
   }
   const symbol = String(input.symbol ?? '').trim().toUpperCase();
   const match = symbol.match(/^([A-Z]{1,6})(\d{2})(\d{2})(\d{2})([CP])(\d{8})$/);
@@ -35,8 +38,10 @@ export function normalizeOptionTicket(input: Record<string, unknown>, now = new 
   if (Number(target_price) <= Number(entry_price)) throw new Error('First target must exceed entry price');
   const strike = Number(strikeText) / 1000;
   if (strike <= 0) throw new Error('Invalid strike');
+  const quantity = normalizeOptionEntryQuantity(input.quantity);
+  const target_quantity = normalizeOptionTargetQuantity(input.target_quantity, quantity);
   return { symbol, underlying, expiration, option_type: cp === 'C' ? 'call' : 'put', strike,
-    entry_price, target_price, quantity: 3, target_quantity: 1 };
+    entry_price, target_price, quantity, target_quantity };
 }
 
 export function optionPlanLabel(plan: Pick<OptionPlan, 'status' | 'entry_status' | 'target_status'>) {

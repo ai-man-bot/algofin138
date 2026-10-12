@@ -19,9 +19,32 @@ export function decodeWebhookBody(body: string, contentType = ''): Record<string
   return value as Record<string, any>;
 }
 
-export function parseOptionMessage(message: unknown, now = new Date()) {
+export const DEFAULT_OPTION_ENTRY_QUANTITY = 3;
+export const DEFAULT_OPTION_TARGET_QUANTITY = 1;
+
+export function normalizeOptionEntryQuantity(value: unknown): number {
+  if (value === undefined || value === null || value === '') return DEFAULT_OPTION_ENTRY_QUANTITY;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 1000) {
+    throw new Error('quantity must be a whole number between 1 and 1000');
+  }
+  return parsed;
+}
+
+export function normalizeOptionTargetQuantity(value: unknown, entryQuantity: number): number {
+  if (value === undefined || value === null || value === '') return DEFAULT_OPTION_TARGET_QUANTITY;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > entryQuantity) {
+    throw new Error('target_quantity must be a whole number between 1 and the entry quantity');
+  }
+  return parsed;
+}
+
+export function parseOptionMessage(message: unknown, now = new Date(), sizing?: { quantity?: unknown; targetQuantity?: unknown }) {
   const signal = parseWebhookSignal(message);
   if (signal.asset !== 'option' || signal.action !== 'open') throw new Error('Expected an option BTO entry; use webhook Preview for other actions');
+  const quantity = normalizeOptionEntryQuantity(sizing?.quantity);
+  const targetQuantity = normalizeOptionTargetQuantity(sizing?.targetQuantity, quantity);
   const today = marketDate(now);
   const md = `${String(signal.month).padStart(2, '0')}-${String(signal.day).padStart(2, '0')}`;
   const year = signal.year ?? (Number(today.slice(0, 4)) + (md < today.slice(5) ? 1 : 0));
@@ -30,7 +53,7 @@ export function parseOptionMessage(message: unknown, now = new Date()) {
   if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== expiration || expiration < today) throw new Error('Invalid expiration date or expiration has passed');
   const symbol = `${signal.underlying}${String(year).slice(-2)}${md.replace('-', '')}${signal.option_type === 'call' ? 'C' : 'P'}${String(Math.round(signal.strike! * 1000)).padStart(8, '0')}`;
   return { underlying: signal.underlying, symbol, expiration, strike: signal.strike!, option_type: signal.option_type!,
-    entry_price: signal.reference_price!, target_price: signal.target_price!, quantity: 3, target_quantity: 1 };
+    entry_price: signal.reference_price!, target_price: signal.target_price!, quantity, target_quantity: targetQuantity };
 }
 export function isOptionMessagePayload(payload: Record<string, any>) {
   if (payload.message === undefined) return false;
@@ -51,7 +74,10 @@ export function assertOptionContract(contract: any, plan: ReturnType<typeof pars
 
 export function optionOrder(plan: any, leg: 'entry' | 'target') {
   return {
-    symbol: plan.symbol, qty: leg === 'entry' ? '3' : '1',
+    symbol: plan.symbol,
+    qty: String(leg === 'entry'
+      ? Number(plan.quantity ?? DEFAULT_OPTION_ENTRY_QUANTITY)
+      : Number(plan.target_quantity ?? DEFAULT_OPTION_TARGET_QUANTITY)),
     side: leg === 'entry' ? 'buy' : 'sell', position_intent: leg === 'entry' ? 'buy_to_open' : 'sell_to_close',
     type: 'limit', limit_price: Number(leg === 'entry' ? plan.entry_price : plan.target_price).toFixed(2),
     time_in_force: leg === 'entry' ? 'day' : plan.target_time_in_force,
@@ -64,7 +90,15 @@ export async function optionDeliveryKey(scope: string, plan: any, eventId: unkno
     throw new Error('event_id must be a nonempty string of at most 200 characters');
   }
   // Without a provider ID, identical normalized signals on the same NY date are one delivery.
-  const identity = eventId === undefined ? [marketDate(now), plan.symbol, plan.entry_price, plan.target_price] : ['event', eventId];
+  // Non-default quantities join the identity so differently sized tickets are distinct plans;
+  // default-sized deliveries keep the historical key so in-flight dedupe is unchanged.
+  const quantity = Number(plan.quantity ?? DEFAULT_OPTION_ENTRY_QUANTITY);
+  const targetQuantity = Number(plan.target_quantity ?? DEFAULT_OPTION_TARGET_QUANTITY);
+  const identity = eventId === undefined ? [
+    marketDate(now), plan.symbol, plan.entry_price, plan.target_price,
+    quantity !== DEFAULT_OPTION_ENTRY_QUANTITY ? quantity : undefined,
+    targetQuantity !== DEFAULT_OPTION_TARGET_QUANTITY ? targetQuantity : undefined,
+  ] : ['event', eventId];
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([scope, identity])));
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
 }

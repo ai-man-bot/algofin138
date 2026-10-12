@@ -9,7 +9,7 @@ const db=new PGlite();
 await db.exec(`create role anon; create role authenticated; create role service_role;
 create schema auth; create table auth.users(id uuid primary key);
 create function auth.uid() returns uuid language sql as 'select null::uuid';`);
-for(const path of ['202609250001_option_trade_plans.sql','202610020001_option_signal_actions.sql']) {
+for(const path of ['202609250001_option_trade_plans.sql','202610020001_option_signal_actions.sql','202610110002_option_plan_configurable_sizing.sql']) {
   await db.exec(await readFile(new URL(`../supabase/migrations/${path}`,import.meta.url),'utf8'));
 }
 const owner='11111111-1111-4111-8111-111111111111';
@@ -52,5 +52,12 @@ const permissions=(await db.query(`select
   has_function_privilege('authenticated','save_option_action(uuid,uuid,uuid,jsonb,text,text)','execute') as user_write,
   has_function_privilege('service_role','save_option_action(uuid,uuid,uuid,jsonb,text,text)','execute') as worker_write`)).rows[0];
 assert.deepEqual(permissions,{anon_enqueue:false,user_write:false,worker_write:true});
+// Configurable sizing: quantities outside the relaxed constraints are rejected by the database.
+const sizedInsert='insert into option_trade_plans(id,user_id,broker_account_id,broker_base_url,route_scope,delivery_key,'+
+  'original_message,underlying,symbol,expiration,strike,option_type,entry_price,target_price,quantity,target_quantity,status,entry_filled_qty,target_filled_qty) '+
+  "values($1,$2,'paper','https://paper-api.alpaca.markets','route:owned',$3,'fixture','AAPL','AAPL301009C00335000','2030-10-09',335,'call',2,2.4,$4,$5,'queued',0,0)";
+await db.query(sizedInsert,['44444444-4444-4444-8444-444444444444',owner,'sized-key',5,2]);
+await assert.rejects(()=>db.query(sizedInsert,['66666666-6666-4666-8666-666666666666',owner,'sized-key-bad',0,1]),/quantity/,'zero entry quantity violates the sizing constraint');
+await assert.rejects(()=>db.query(sizedInsert,['88888888-8888-4888-8888-888888888888',owner,'sized-key-bad2',2,3]),/target_quantity/,'target above entry quantity violates the sizing constraint');
 await db.close();
 console.log('Isolated PostgreSQL migrations, action idempotency/conflicts, worker leases, and permissions passed');
