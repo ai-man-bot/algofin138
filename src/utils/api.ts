@@ -715,6 +715,10 @@ export const strategyAutomationAPI = {
   getSchedules: (options: CachedRequestOptions = {}) =>
     cachedApiRequest('/strategy-automation/schedules', { method: 'GET', ttlMs: 30_000, ...options }),
 
+  getRuns: (strategyId: string, options: CachedRequestOptions = {}) =>
+    cachedApiRequest('/strategy-automation/runs?strategy_id=' + encodeURIComponent(strategyId), { method: 'GET', ttlMs: 15_000, ...options }),
+
+
   saveSchedule: (strategyId: string, payload: any) =>
     mutate(`/strategy-automation/schedules/${strategyId}`, {
       method: 'PUT',

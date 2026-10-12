@@ -3,7 +3,7 @@ import { brokersAPI, webhooksAPI } from '../utils/api';
 import { sendWebhookTest } from '../utils/webhookTest';
 import './OptionsOrderTicket.css';
 
-type Route = { id: string; name: string; status: string; url: string; broker_id: string; environment: string | null; connection_error?: string; strategyId?: string };
+type Route = { id: string; name: string; status: string; url: string; broker_id: string; environment: string | null; connection_error?: string; strategyId?: string; auto_execute?: boolean };
 type Broker = { id: string; name?: string; connected: boolean; broker_type?: string; brokerType?: string; base_url?: string };
 const errorText = (error: unknown) => error instanceof Error ? error.message : 'Request failed';
 const field = 'option-ticket-field', button = 'option-ticket-button', panel = 'option-ticket-panel';
@@ -22,6 +22,7 @@ export function WebhooksPage() {
   const [name, setName] = useState('');
   const [brokerId, setBrokerId] = useState('');
   const [status, setStatus] = useState('active');
+  const [autoExecute, setAutoExecute] = useState(false);
   const [previewRoute, setPreviewRoute] = useState<Route | null>(null);
   const [payload, setPayload] = useState(example);
   const [preview, setPreview] = useState<any>(null);
@@ -56,13 +57,14 @@ export function WebhooksPage() {
     setName(route === 'new' ? '' : route.name);
     setBrokerId(route === 'new' ? '' : route.broker_id);
     setStatus(route === 'new' ? 'active' : route.status);
+    setAutoExecute(route === 'new' ? false : route.auto_execute === true);
   }
   async function save(event: React.FormEvent) {
     event.preventDefault();
     if (!editor || !environment || mutation.current) return;
     mutation.current = true; setBusy(true); setError('');
     try {
-      const values = { name, broker_id: brokerId, environment, status };
+      const values = { name, broker_id: brokerId, environment, status, auto_execute: autoExecute };
       if (editor === 'new') await webhooksAPI.create(values); else await webhooksAPI.update(editor.id, values);
       setEditor(null); setNotice('Webhook saved. No order was placed.'); await load();
     } catch (error) { setError(errorText(error)); }
@@ -120,6 +122,11 @@ export function WebhooksPage() {
           {brokers.map(item => <option key={item.id} value={item.id}>{item.name || 'Alpaca'} — {environmentOf(item) || 'Unknown environment'} — {item.id}</option>)}
         </select></label>
         <label>Status<select className={field} value={status} onChange={event => setStatus(event.target.value)}><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
+        <label className="mt-3 flex items-center justify-between rounded-lg bg-slate-800/30 px-3 py-3 text-sm text-slate-300">
+          <span>Auto-execute accepted orders</span>
+          <input type="checkbox" checked={autoExecute} onChange={event => setAutoExecute(event.target.checked)} className="h-4 w-4 accent-blue-500" />
+        </label>
+        <p className="mt-2">Risk-accepted signals on this route are submitted to the connected Alpaca account. Off by default; routes only record OMS orders.</p>
       </fieldset>
       <p>{environment ? `New signals will use this ${environment.toUpperCase()} account.` : 'Select a connected Alpaca account.'} Existing plans keep their original account. Deactivation does not cancel existing orders.</p>
       {editor !== 'new' && editor.strategyId && <p>Existing strategy association will be preserved.</p>}
@@ -127,7 +134,7 @@ export function WebhooksPage() {
     </form>}
     {!routes.length && !loading && <p>{loadError ? 'Webhook data unavailable.' : 'No webhooks yet. Create a route for the account that should receive your signals.'}</p>}
     {routes.map(route => <section key={route.id} className={panel} aria-label={route.name}>
-      <div className="flex justify-between"><h3>{route.name}</h3><span>{route.status.toUpperCase()} · {route.environment?.toUpperCase() || 'ACCOUNT UNAVAILABLE'}</span></div>
+      <div className="flex justify-between"><h3 className="flex items-center gap-2">{route.name}{route.auto_execute && <span className="inline-flex items-center rounded bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-400">Auto-execute</span>}</h3><span>{route.status.toUpperCase()} · {route.environment?.toUpperCase() || 'ACCOUNT UNAVAILABLE'}</span></div>
       <p>Account: {route.broker_id || 'Not selected'}</p>
       {route.connection_error && <p role="alert">{route.connection_error}</p>}
       <label>Webhook URL<input className={`${field} font-mono`} readOnly value={route.url} onFocus={event => event.target.select()} /></label>

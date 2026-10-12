@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -12,6 +12,7 @@ import {
   Target,
   Zap,
 } from './CustomIcons';
+import { strategyAutomationAPI } from '../utils/api';
 import {
   buildDefaultAutomationPreview,
   buildOperationsReadinessReport,
@@ -44,7 +45,60 @@ const statusClass: Record<string, string> = {
   blocked: 'bg-rose-500/10 text-rose-400',
   rejected: 'bg-rose-500/10 text-rose-400',
   fail: 'bg-rose-500/10 text-rose-400',
+  completed: 'bg-emerald-500/10 text-emerald-400',
+  failed: 'bg-rose-500/10 text-rose-400',
 };
+
+const errorText = (error: unknown) => error instanceof Error ? error.message : 'Request failed';
+
+type AutomationScheduleRow = {
+  strategy_id: string;
+  enabled: boolean;
+  interval_minutes: number;
+  max_signals_per_run: number;
+  min_confidence: number;
+  allowed_symbols: string[] | null;
+};
+
+type AutomationRunRow = {
+  id: string;
+  strategy_id: string;
+  status: string;
+  accepted_order_ids: string[] | null;
+  blocked_order_ids: string[] | null;
+  started_at: string;
+  completed_at?: string | null;
+  metadata?: Record<string, any> | null;
+};
+
+type RunOutcome = { tone: 'ok' | 'info' | 'error'; message: string };
+
+const runOutcomeClass: Record<RunOutcome['tone'], string> = {
+  ok: 'bg-emerald-500/10 text-emerald-300',
+  info: 'bg-blue-500/10 text-blue-300',
+  error: 'bg-rose-500/10 text-rose-300',
+};
+
+function describeAutomationRun(result: any): RunOutcome {
+  const run = result?.run ?? {};
+  const accepted = Array.isArray(run.accepted_order_ids) ? run.accepted_order_ids.length : 0;
+  const blocked = Array.isArray(run.blocked_order_ids) ? run.blocked_order_ids.length : 0;
+  const metadata = run.metadata ?? {};
+  switch (run.status) {
+    case 'completed':
+      return { tone: 'ok', message: `Run completed: ${accepted} accepted, ${blocked} blocked.` };
+    case 'no_signals':
+      return { tone: 'info', message: 'Run recorded. Runs execute signals supplied by the strategy runner (Python runner or API callers); none were provided.' };
+    case 'not_due':
+      return { tone: 'info', message: 'Previous run is more recent than the interval.' };
+    case 'disabled':
+      return { tone: 'info', message: 'Schedule is disabled.' };
+    case 'failed':
+      return { tone: 'error', message: `Run failed: ${metadata.error || metadata.reason || result?.error || 'unknown error'}.` };
+    default:
+      return { tone: 'info', message: run.status ? `Run recorded with status ${String(run.status)}.` : 'Run recorded.' };
+  }
+}
 
 function StatusPill({ status }: { status: string }) {
   return (
@@ -91,6 +145,14 @@ export function OperationsPage({ active = true }: { active?: boolean }) {
     allowedSymbols: 'AAPL, MSFT, NVDA, TSLA',
   });
   const [automation, setAutomation] = useState<AutomationPreview>(buildDefaultAutomationPreview());
+  const [schedulesLoading, setSchedulesLoading] = useState(false);
+  const [savingSchedule, setSavingSchedule] = useState(false);
+  const [scheduleNotice, setScheduleNotice] = useState('');
+  const [scheduleError, setScheduleError] = useState('');
+  const [running, setRunning] = useState(false);
+  const [runOutcome, setRunOutcome] = useState<RunOutcome | null>(null);
+  const [recentRuns, setRecentRuns] = useState<AutomationRunRow[]>([]);
+  const [runsError, setRunsError] = useState('');
   const [lastAction, setLastAction] = useState('No operations action has been submitted in this session.');
 
   const riskAudits = useMemo(() => buildSampleRiskAudits(), []);
@@ -101,8 +163,124 @@ export function OperationsPage({ active = true }: { active?: boolean }) {
     setLastAction(`Risk settings staged: kill switch ${riskSettings.killSwitchEnabled ? 'enabled' : 'disabled'}, max position $${riskSettings.maxPositionSize}.`);
   };
 
-  const saveAutomation = () => {
-    setLastAction(`Automation schedule staged for ${automation.strategyId}: every ${automation.intervalMinutes} minutes, confidence >= ${automation.minConfidence}.`);
+  const loadAutomationSchedules = useCallback(async (strategyId: string) => {
+    setSchedulesLoading(true);
+    setScheduleError('');
+    try {
+      const rows = ((await strategyAutomationAPI.getSchedules({ forceRefresh: true })) || []) as AutomationScheduleRow[];
+      const selected = rows.find((row) => row.strategy_id === strategyId) || rows[0];
+      if (selected) {
+        setAutomation({
+          strategyId: selected.strategy_id,
+          enabled: selected.enabled === true,
+          intervalMinutes: Number(selected.interval_minutes) || 1,
+          minConfidence: Number(selected.min_confidence) || 0,
+          maxSignalsPerRun: Number(selected.max_signals_per_run) || 1,
+          allowedSymbols: Array.isArray(selected.allowed_symbols) ? selected.allowed_symbols : [],
+        });
+      }
+      return selected?.strategy_id || strategyId;
+    } catch (error) {
+      setScheduleError(`Could not load automation schedules: ${errorText(error)}`);
+      return strategyId;
+    } finally {
+      setSchedulesLoading(false);
+    }
+  }, []);
+
+  const loadAutomationRuns = useCallback(async (strategyId: string) => {
+    if (!strategyId.trim()) {
+      setRecentRuns([]);
+      return;
+    }
+    setRunsError('');
+    try {
+      const rows = ((await strategyAutomationAPI.getRuns(strategyId, { forceRefresh: true })) || []) as AutomationRunRow[];
+      setRecentRuns(rows.slice(0, 5));
+    } catch (error) {
+      setRunsError(`Could not load recent runs: ${errorText(error)}`);
+    }
+  }, []);
+
+  // Load the saved schedule and recent runs once when the automation panel is opened.
+  // The strategy ID is read from the render snapshot so editing the form does not re-fetch.
+  useEffect(() => {
+    if (activePanel !== 'automation') return;
+    let canceled = false;
+    void (async () => {
+      const resolvedStrategyId = await loadAutomationSchedules(automation.strategyId);
+      if (canceled) return;
+      await loadAutomationRuns(resolvedStrategyId);
+    })();
+    return () => { canceled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePanel, loadAutomationSchedules, loadAutomationRuns]);
+
+  const saveAutomation = async () => {
+    const strategyId = automation.strategyId.trim();
+    const intervalMinutes = Number(automation.intervalMinutes);
+    const maxSignalsPerRun = Number(automation.maxSignalsPerRun);
+    const minConfidence = Number(automation.minConfidence);
+    if (!strategyId) {
+      setScheduleError('Enter a strategy ID before saving.');
+      return;
+    }
+    if (!Number.isFinite(intervalMinutes) || intervalMinutes < 1) {
+      setScheduleError('Interval minutes must be a positive number.');
+      return;
+    }
+    if (!Number.isFinite(maxSignalsPerRun) || maxSignalsPerRun < 1) {
+      setScheduleError('Max signals per run must be a positive number.');
+      return;
+    }
+    if (!Number.isFinite(minConfidence) || minConfidence < 0 || minConfidence > 1) {
+      setScheduleError('Minimum confidence must be between 0 and 1.');
+      return;
+    }
+    if (savingSchedule) return;
+    setSavingSchedule(true);
+    setScheduleError('');
+    setScheduleNotice('');
+    try {
+      await strategyAutomationAPI.saveSchedule(strategyId, {
+        enabled: automation.enabled,
+        intervalMinutes: Math.floor(intervalMinutes),
+        maxSignalsPerRun: Math.floor(maxSignalsPerRun),
+        minConfidence,
+        allowedSymbols: automation.allowedSymbols,
+      });
+      const summary = `Automation schedule saved for ${strategyId}: every ${Math.floor(intervalMinutes)} minutes, confidence >= ${minConfidence}.`;
+      setScheduleNotice(summary);
+      setLastAction(summary);
+    } catch (error) {
+      setScheduleError(errorText(error));
+      setLastAction(`Automation schedule save failed: ${errorText(error)}`);
+    } finally {
+      setSavingSchedule(false);
+    }
+  };
+
+  const runAutomationNow = async () => {
+    const strategyId = automation.strategyId.trim();
+    if (!strategyId) {
+      setRunOutcome({ tone: 'error', message: 'Enter a strategy ID before running.' });
+      return;
+    }
+    if (running) return;
+    setRunning(true);
+    setRunOutcome(null);
+    try {
+      const result = await strategyAutomationAPI.run(strategyId, { auto_execute: false });
+      const outcome = describeAutomationRun(result);
+      setRunOutcome(outcome);
+      setLastAction(`Automation run for ${strategyId}: ${outcome.message}`);
+      await loadAutomationRuns(strategyId);
+    } catch (error) {
+      setRunOutcome({ tone: 'error', message: errorText(error) });
+      setLastAction(`Automation run failed: ${errorText(error)}`);
+    } finally {
+      setRunning(false);
+    }
   };
 
   return (
@@ -265,6 +443,7 @@ export function OperationsPage({ active = true }: { active?: boolean }) {
                 <Zap className="h-5 w-5 text-blue-400" />
                 <h4 className="text-slate-100">Schedule Controls</h4>
               </div>
+              {schedulesLoading && <p className="mb-4 text-xs text-slate-500">Loading saved schedules…</p>}
               <div className="space-y-4">
                 <label className="flex items-center justify-between rounded-lg bg-slate-800/40 px-3 py-3 text-sm text-slate-300">
                   Automation enabled
@@ -280,32 +459,41 @@ export function OperationsPage({ active = true }: { active?: boolean }) {
                 <Field label="Minimum confidence"><TextInput value={automation.minConfidence} onChange={(event) => setAutomation((current) => ({ ...current, minConfidence: Number(event.target.value) || 0 }))} /></Field>
                 <Field label="Max signals per run"><TextInput value={automation.maxSignalsPerRun} onChange={(event) => setAutomation((current) => ({ ...current, maxSignalsPerRun: Number(event.target.value) || 1 }))} /></Field>
                 <Field label="Allowed symbols"><TextInput value={automation.allowedSymbols.join(', ')} onChange={(event) => setAutomation((current) => ({ ...current, allowedSymbols: event.target.value.split(',').map((symbol) => symbol.trim().toUpperCase()).filter(Boolean) }))} /></Field>
-                <button onClick={saveAutomation} className="w-full rounded-lg bg-blue-500 py-3 text-sm text-white transition-colors hover:bg-blue-600">
-                  Save Automation Schedule
+                <button onClick={() => void saveAutomation()} disabled={savingSchedule} className="w-full rounded-lg bg-blue-500 py-3 text-sm text-white transition-colors hover:bg-blue-600">
+                  {savingSchedule ? 'Saving…' : 'Save Automation Schedule'}
                 </button>
+                {scheduleError && <p role="alert" className="rounded-lg bg-rose-500/10 p-3 text-sm text-rose-300">{scheduleError}</p>}
+                {scheduleNotice && <p role="status" className="rounded-lg bg-emerald-500/10 p-3 text-sm text-emerald-300">{scheduleNotice}</p>}
               </div>
             </div>
             <div className="rounded-lg border border-slate-700/50 bg-slate-950/30 p-5">
               <div className="mb-4 flex items-center justify-between">
-                <h4 className="text-slate-100">Next Run Plan</h4>
-                <button onClick={saveAutomation} className="flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-sm text-white transition-colors hover:bg-emerald-600">
+                <h4 className="text-slate-100">Run Now</h4>
+                <button onClick={() => void runAutomationNow()} disabled={running} className="flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-sm text-white transition-colors hover:bg-emerald-600">
                   <Play className="h-4 w-4" />
-                  Run Preview
+                  {running ? 'Running…' : 'Run now'}
                 </button>
               </div>
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                <Metric label="Eligible signals" value="2" tone="blue" />
-                <Metric label="Blocked by filters" value="2" tone="yellow" />
-                <Metric label="Risk blocks" value="0" tone="emerald" />
+              <p className="text-xs text-slate-500">UI runs record orders without submitting them. Broker submission happens only when a run explicitly opts in via auto_execute.</p>
+              {runOutcome && (
+                <p role={runOutcome.tone === 'error' ? 'alert' : 'status'} className={`mt-4 rounded-lg p-3 text-sm ${runOutcomeClass[runOutcome.tone]}`}>
+                  {runOutcome.message}
+                </p>
+              )}
+              <div className="mb-4 mt-6 flex items-center gap-2">
+                <Clock className="h-5 w-5 text-blue-400" />
+                <h4 className="text-slate-100">Recent runs</h4>
               </div>
-              <div className="mt-5 space-y-3">
-                {['AAPL momentum breakout', 'MSFT trend continuation'].map((signal) => (
-                  <div key={signal} className="flex items-center justify-between rounded-lg border border-slate-700/50 bg-slate-800/30 p-4">
+              {runsError && <p role="alert" className="rounded-lg bg-rose-500/10 p-3 text-sm text-rose-300">{runsError}</p>}
+              {!runsError && !recentRuns.length && <p className="text-sm text-slate-400">No runs recorded yet for this strategy.</p>}
+              <div className="space-y-3">
+                {recentRuns.map((run) => (
+                  <div key={run.id} className="flex items-center justify-between rounded-lg border border-slate-700/50 bg-slate-800/30 p-4">
                     <div>
-                      <p className="text-sm text-slate-100">{signal}</p>
-                      <p className="text-xs text-slate-500">python-strategy-runner</p>
+                      <p className="text-sm text-slate-100">{run.started_at ? new Date(run.started_at).toLocaleString() : 'Not started'}</p>
+                      <p className="mt-1 text-xs text-slate-500">{run.accepted_order_ids?.length ?? 0} accepted · {run.blocked_order_ids?.length ?? 0} blocked</p>
                     </div>
-                    <StatusPill status="ready" />
+                    <StatusPill status={run.status} />
                   </div>
                 ))}
               </div>
