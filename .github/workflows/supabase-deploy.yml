@@ -27,6 +27,31 @@ jobs:
         with:
           node-version: 20
 
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Run platform test suites
+        run: |
+          node --experimental-strip-types tests/run-tests.ts
+          node --experimental-strip-types tests/webhookTest.test.ts
+          npm run test:webhook-signals
+
+      - name: Run isolated database verification (PGlite)
+        run: |
+          npm install --prefix tmp/webhook-db-verification --no-save @electric-sql/pglite
+          node tests/optionSignalDatabase.test.mjs
+
+      - name: Type check edge function
+        run: deno check --node-modules-dir=none supabase/functions/webhook-listener/index.ts
+
       - name: Setup Supabase CLI
         uses: supabase/setup-cli@v1
         with:
