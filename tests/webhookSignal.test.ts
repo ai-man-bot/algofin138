@@ -1,5 +1,17 @@
 import assert from 'node:assert/strict';
-import {parseWebhookSignal,signalExecutionGap} from '../src/utils/webhookSignal.ts';
+import {parseWebhookSignal,signalExecutionGap,equityEntryRouteQuantity,equityRouteGap} from '../src/utils/webhookSignal.ts';
+
+const pins=parseWebhookSignal('PINS: BTO Buy to open at 30.10 with first target above 31.00');
+assert.equal(equityEntryRouteQuantity(pins,{auto_execute:true,equity_order_quantity:25}),25);
+assert.equal(equityEntryRouteQuantity(pins,{auto_execute:true,equity_order_quantity:null}),null);
+assert.equal(equityEntryRouteQuantity(pins,{auto_execute:false,equity_order_quantity:25}),null);
+assert.equal(equityEntryRouteQuantity(pins,{auto_execute:true,equity_order_quantity:2.5}),null);
+assert.match(equityRouteGap(pins,{auto_execute:false})!,/auto-execute/);
+assert.match(equityRouteGap(pins,{auto_execute:true})!,/share quantity/);
+assert.equal(equityRouteGap(pins,{auto_execute:true,equity_order_quantity:25}),null);
+const riotClose=parseWebhookSignal('RIOT: STC Close the trade at 12.40');
+assert.equal(equityEntryRouteQuantity(riotClose,{auto_execute:true,equity_order_quantity:25}),null,'equity exits are never auto-sized');
+assert.ok(signalExecutionGap(riotClose));
 import {parseOptionMessage,isOptionMessagePayload} from '../src/utils/optionWebhook.ts';
 import {matchOptionSignalPlan} from '../supabase/functions/webhook-listener/option_signal_store.ts';
 

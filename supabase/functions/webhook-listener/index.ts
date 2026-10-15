@@ -26,7 +26,7 @@ import {
 import { buildAlpacaOrderFromWebhookPayload } from "../../../src/utils/webhookAlpacaOrders.ts";
 import { decodeWebhookBody, parseOptionMessage, isOptionMessagePayload } from "../../../src/utils/optionWebhook.ts";
 import { buildAlpacaQuotesResponse, normalizeQuoteSnapshot } from "../../../src/utils/quoteSnapshot.ts";
-import { parseWebhookSignal, signalExecutionGap } from "../../../src/utils/webhookSignal.ts";
+import { equityEntryRouteQuantity, equityRouteGap, parseWebhookSignal, signalExecutionGap } from "../../../src/utils/webhookSignal.ts";
 import { storeOptionSignal } from './option_signal_store.ts';
 import { runOptionPlanBatch } from "./option_plan_worker.ts";
 import { storeOptionPlan, OptionPlanConflict } from './option_plan_store.ts';
@@ -1314,13 +1314,7 @@ async function receiveOptionMessage(req: Request, supabase: any, payload: any, t
       // Equity BTO entries can execute when the route opts in to auto execution
       // and carries a default share quantity. Everything else keeps the explicit
       // needs_configuration response; no sizing guesswork ever happens here.
-      if (
-        instruction.asset === 'equity' &&
-        instruction.action === 'open' &&
-        tokenizedRoute?.auto_execute === true &&
-        Number.isInteger(Number(tokenizedRoute?.equity_order_quantity)) &&
-        Number(tokenizedRoute.equity_order_quantity) >= 1
-      ) {
+      if (equityEntryRouteQuantity(instruction, tokenizedRoute) !== null) {
         const equityResponse = await executeEquitySignalFromInstruction({
           supabase,
           req,
@@ -1335,7 +1329,8 @@ async function receiveOptionMessage(req: Request, supabase: any, payload: any, t
         if (equityResponse) return equityResponse;
       }
       return jsonResponse({ ok: false, instruction,
-        status: instruction.action === 'incomplete_close' ? 'needs_review' : 'needs_configuration', error: gap }, 409);
+        status: instruction.action === 'incomplete_close' ? 'needs_review' : 'needs_configuration',
+        error: equityRouteGap(instruction, tokenizedRoute) ?? gap }, 409);
     }
     // No order can be accepted until the persistent worker has been configured.
     if (!Deno.env.get('OPTION_WORKER_SECRET')) return jsonResponse({ error: 'Option worker is not configured' }, 503);
@@ -1883,6 +1878,8 @@ Deno.serve(async (req: Request) => {
     }
     const response = await receiveOptionMessage(req, supabase, payload, token, legacyStrategyId, requestLog?.id);
     const result = await response.clone().json();
+    // Equity entries already logged their routing/broker status; keep it.
+    if (result?.routing) return response;
     await updateWebhookOrderRequestLog(supabase, requestLog?.id, {
       status: result.status === 'needs_configuration' || result.status === 'needs_review' || result.status === 'option_action_queued'
         ? result.status : response.ok ? 'option_plan_queued' : 'option_plan_rejected', httpStatus: response.status,

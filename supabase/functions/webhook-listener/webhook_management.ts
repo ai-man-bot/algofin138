@@ -1,7 +1,7 @@
 import { decodeWebhookBody, isOptionMessagePayload, optionOrder } from '../../../src/utils/optionWebhook.ts';
 import { buildAlpacaOrderFromWebhookPayload } from '../../../src/utils/webhookAlpacaOrders.ts';
 import { handleOptionTicketRoute } from './option_ticket_routes.ts';
-import { parseWebhookSignal, signalExecutionGap } from '../../../src/utils/webhookSignal.ts';
+import { equityEntryRouteQuantity, equityRouteGap, parseWebhookSignal, signalExecutionGap } from '../../../src/utils/webhookSignal.ts';
 import { resolveOptionSignalPlan } from './option_signal_store.ts';
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -12,20 +12,28 @@ export function webhookEvent(row: any, names: Map<string, string>, option = fals
     id: row.id, webhook: names.get(row.route_scope.replace('route:', '')) || 'Strategy option webhook',
     timestamp: row.created_at, status: row.status, error: row.last_error,
     receivedMessage: row.original_message ?? null,
-    payload: { symbol: row.symbol, action: 'buy', quantity: row.quantity, type: 'limit' },
+    payload: { symbol: row.symbol, action: 'buy', quantity: row.quantity, type: 'limit', price: row.entry_price ?? null },
     alpacaOrder: { type: 'limit', status: row.management?.enabled ? row.status : row.entry_status || row.status, filled_qty: row.entry_filled_qty ?? 0 },
     plan_id: row.id,
   };
   const payload = row.request_payload || {};
-  const order = row.response_payload?.alpaca?.response || row.response_payload?.order || {};
+  const response = row.response_payload || {};
+  const order = response.alpaca?.response || response.order || {};
+  const routed = response.routing?.order?.raw_signal || {};
+  const instruction = response.instruction ?? null;
+  const submission = response.routing?.broker_submission;
   return {
     id: row.id, webhook: names.get(row.route_id) || 'Strategy webhook', timestamp: row.created_at,
-    status: row.status, error: row.error_message,
+    status: row.status, error: row.error_message ?? submission?.reason ?? response.error ?? null,
     receivedMessage: typeof payload.message === 'string' ? payload.message : null,
-    instruction: row.response_payload?.instruction ?? null,
-    payload: { symbol: row.symbol || payload.symbol || row.response_payload?.instruction?.underlying, action: row.side || payload.side || payload.action,
-      quantity: payload.qty ?? payload.quantity, type: payload.order_type ?? payload.type },
-    alpacaOrder: { type: order.type, status: order.status || row.status,
+    instruction,
+    // Unsubmitted signals keep null size/price so the UI never shows a fabricated market order.
+    payload: { symbol: row.symbol || payload.symbol || instruction?.underlying || routed.symbol,
+      action: row.side || payload.side || payload.action || routed.side || (instruction?.action === 'open' ? 'buy' : instruction ? 'sell' : undefined),
+      quantity: payload.qty ?? payload.quantity ?? routed.quantity ?? null,
+      type: payload.order_type ?? payload.type ?? routed.orderType ?? null,
+      price: payload.limit_price ?? payload.price ?? routed.limitPrice ?? instruction?.reference_price ?? null },
+    alpacaOrder: { type: order.type, status: order.status || submission?.status || row.status,
       filled_qty: order.filled_qty, filled_avg_price: order.filled_avg_price },
   };
 }
@@ -34,7 +42,7 @@ export function optionActionEvent(row: any, names: Map<string,string>) {
   const sale=row.execution?.sale;
   return {id:row.id,webhook:names.get(row.route_scope.replace('route:','')) || 'Strategy option webhook',
     timestamp:row.created_at,status:row.status,error:row.last_error,receivedMessage:row.original_message,instruction:row.instruction,
-    payload:{symbol:row.symbol || sale?.payload?.symbol || row.instruction?.underlying,action:'sell',quantity:sale?.payload?.qty},
+    payload:{symbol:row.symbol || sale?.payload?.symbol || row.instruction?.underlying,action:'sell',quantity:sale?.payload?.qty ?? null,type:sale?.payload?.type ?? null,price:null},
     alpacaOrder:{type:sale?.payload?.type,status:row.status==='completed' ? sale?.status || row.status : row.status,filled_qty:sale?.filled_qty},
     plan_id:row.plan_id,action_id:row.id};
 }
@@ -60,7 +68,7 @@ export async function handleWebhookManagement(req: Request, url: URL, deps: {
 
     if (req.method === 'GET' && action === 'events') {
       let logs = db.from('webhook_order_request_logs').select('id,route_id,created_at,status,error_message,symbol,side,request_payload,response_payload').eq('user_id', userId);
-      let plans = db.from('option_trade_plans').select('id,route_scope,created_at,status,last_error,original_message,symbol,quantity,entry_status,entry_filled_qty,management').eq('user_id', userId);
+      let plans = db.from('option_trade_plans').select('id,route_scope,created_at,status,last_error,original_message,symbol,quantity,entry_price,entry_status,entry_filled_qty,management').eq('user_id', userId);
       let actions = db.from('option_signal_actions').select('*').eq('user_id',userId);
       if (route) { logs = logs.eq('route_id', id); plans = plans.eq('route_scope', `route:${id}`); actions=actions.eq('route_scope',`route:${id}`); }
       const [logRows, planRows, actionRows] = await Promise.all([logs.order('created_at', { ascending: false }).limit(100), plans.order('created_at', { ascending: false }).limit(100),actions.order('created_at',{ascending:false}).limit(100)]);
@@ -119,9 +127,15 @@ export async function handleWebhookManagement(req: Request, url: URL, deps: {
         try { instruction = parseWebhookSignal(payload.message); }
         catch (error: any) { return respond({ error: error.message }, 400); }
         const gap = signalExecutionGap(instruction);
+        const equityQuantity = equityEntryRouteQuantity(instruction, route);
+        if (gap && equityQuantity !== null) return respond({ ok: true, preview_only: true, executable: true, instruction,
+          order: { symbol: instruction.underlying, side: 'buy', qty: String(equityQuantity), type: 'limit',
+            limit_price: instruction.reference_price, time_in_force: 'day' },
+          first_target_managed: false, broker_id: route.broker_account_id,
+          environment: base === 'https://paper-api.alpaca.markets' ? 'paper' : 'live' });
         if (gap) return respond({ ok: true, preview_only: true, executable: false,
           instruction, status: instruction.action === 'incomplete_close' ? 'needs_review' : 'needs_configuration',
-          reason: gap, broker_id: route.broker_account_id,
+          reason: equityRouteGap(instruction, route) ?? gap, broker_id: route.broker_account_id,
           environment: base === 'https://paper-api.alpaca.markets' ? 'paper' : 'live' });
         if(instruction.action==='close_all'||instruction.action==='target_reached') {
           try {

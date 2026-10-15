@@ -43,6 +43,21 @@ export function parseWebhookSignal(message: unknown): WebhookSignal {
   throw new Error('Expected a supported BTO entry, STC close/target, or DCA instruction');
 }
 
+// Equity entries carry no size, so they execute only on routes that opt in to
+// auto execution with a default share quantity.
+export function equityEntryRouteQuantity(signal: WebhookSignal, route: any): number | null {
+  if (signal.asset !== 'equity' || signal.action !== 'open' || route?.auto_execute !== true) return null;
+  const quantity = Number(route?.equity_order_quantity);
+  return Number.isInteger(quantity) && quantity >= 1 && quantity <= 100000 ? quantity : null;
+}
+
+export function equityRouteGap(signal: WebhookSignal, route: any) {
+  if (signal.asset !== 'equity' || signal.action !== 'open') return null;
+  if (route?.auto_execute !== true) return 'Needs configuration: enable auto-execute on this webhook to trade equity entries';
+  if (equityEntryRouteQuantity(signal, route) === null) return 'Needs configuration: set a default equity share quantity on this webhook';
+  return null;
+}
+
 export function signalExecutionGap(signal: WebhookSignal) {
   if (signal.action === 'incomplete_close') return 'Needs review: STC does not specify a closing instruction';
   if (signal.asset === 'equity') return 'Needs configuration: equity sizing and exit policies';

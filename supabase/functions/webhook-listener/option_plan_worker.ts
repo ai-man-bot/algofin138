@@ -140,7 +140,8 @@ export async function runOptionPlanBatch(supabase: any, getBroker: any, id: stri
       actions=actionRows.data || [];
       if (actions.length>200) throw new OptionActionReview('Action history limit exceeded; manual review required');
       if (actions.length || plan.management?.enabled) {
-        if(actions.some(action=>action.status==='needs_attention')) throw new OptionActionReview('Prior action needs manual recovery before further management');
+        const blocking=actions.find(action=>action.status==='needs_attention');
+        if(blocking) throw new OptionActionReview(`Prior action ${blocking.id} needs manual recovery before further management${blocking.last_error ? `: ${blocking.last_error}` : ''}`);
         const peers = await supabase.from('option_trade_plans').select('id,status,entry_filled_qty').eq('user_id',plan.user_id)
           .eq('broker_account_id',plan.broker_account_id).eq('symbol',plan.symbol).limit(201);
         if(peers.error) throw new Error(peers.error.message);

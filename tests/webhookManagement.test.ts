@@ -86,6 +86,23 @@ const malformed = await request(`/${owned}/preview`, 'POST', { payload: 'not an 
 assert.equal(malformed.status, 400);
 const equityText=await request(`/${owned}/preview`,'POST',{payload:'WULF: BTO Buy To Open at 14.68 with first target above 14.97'});
 assert.equal(equityText.body.executable,false);assert.equal(equityText.body.status,'needs_configuration');assert.equal(equityText.body.instruction.asset,'equity');
+assert.match(equityText.body.reason,/auto-execute/,'preview names the missing route setting');
+Object.assign(tables.webhook_routes[0],{auto_execute:true});
+const unsized=await request(`/${owned}/preview`,'POST',{payload:'WULF: BTO Buy To Open at 14.68 with first target above 14.97'});
+assert.equal(unsized.body.executable,false);assert.match(unsized.body.reason,/share quantity/);
+Object.assign(tables.webhook_routes[0],{equity_order_quantity:50});
+const sized=await request(`/${owned}/preview`,'POST',{payload:'WULF: BTO Buy To Open at 14.68 with first target above 14.97'});
+assert.equal(sized.body.executable,true,'preview matches execution eligibility');assert.equal(sized.body.order.qty,'50');
+assert.equal(sized.body.order.limit_price,'14.68');assert.equal(sized.body.first_target_managed,false);assert.equal(writes,0);
+Object.assign(tables.webhook_routes[0],{auto_execute:undefined,equity_order_quantity:undefined});
+const blockedEquity=webhookEvent({route_id:owned,status:'needs_configuration',request_payload:{message:'PINS: BTO Buy to open at 30.10 with first target above 31.00'},
+  response_payload:{instruction:{asset:'equity',action:'open',underlying:'PINS',reference_price:'30.10'},error:'Needs configuration'}},new Map([[owned,'Owned']]));
+assert.equal(blockedEquity.webhook,'Owned');assert.equal(blockedEquity.payload.quantity,null,'unsubmitted signal has no fabricated quantity');
+assert.equal(blockedEquity.payload.type,null);assert.equal(blockedEquity.payload.price,'30.10');assert.equal(blockedEquity.payload.action,'buy');
+assert.equal(blockedEquity.error,'Needs configuration');
+const routedEquity=webhookEvent({route_id:owned,status:'submitted',request_payload:{message:'PINS: BTO ...'},
+  response_payload:{routing:{order:{raw_signal:{symbol:'PINS',side:'buy',quantity:10,orderType:'limit',limitPrice:30.1}},broker_submission:{status:'submitted'}}}},new Map());
+assert.equal(routedEquity.payload.quantity,10);assert.equal(routedEquity.payload.type,'limit');assert.equal(routedEquity.alpacaOrder.status,'submitted');
 const dca=await request(`/${owned}/preview`,'POST',{payload:'PURR 20C 12/18: DCAAdd more at 0.71 for dollar cost averaging.'});
 assert.equal(dca.body.instruction.action,'add');assert.equal(dca.body.executable,false);
 const exit=await request(`/${owned}/preview`,'POST',{payload:'AAPL 335C 10/09: STCClose the trade at 2.40!'});

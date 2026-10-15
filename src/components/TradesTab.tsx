@@ -315,7 +315,7 @@ export function TradesTab({ selectedBrokerId, setSelectedBrokerId, active = true
   
   const filteredWebhookEvents = webhookEvents.filter(e =>
     e.payload?.symbol?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    e.webhookName?.toLowerCase().includes(searchTerm.toLowerCase())
+    (e.webhookName || e.webhook)?.toLowerCase().includes(searchTerm.toLowerCase())
   );
   
   const closedTrades = orders.filter(o => 
@@ -983,7 +983,7 @@ function WebhookLogsTable({ events }: { events: any[] }) {
                       </div>
                     </td>
                     <td className="px-4 py-4">
-                      <span className="text-sm text-white">{event.webhookName || 'Unknown'}</span>
+                      <span className="text-sm text-white">{event.webhookName || event.webhook || 'Unknown'}</span>
                     </td>
                     <td className="px-4 py-4">
                       <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-mono font-semibold ${
@@ -1003,24 +1003,24 @@ function WebhookLogsTable({ events }: { events: any[] }) {
                     </td>
                     <td className="px-4 py-4 text-right">
                       <span className="text-sm text-white font-mono">
-                        {payload.quantity || 0}
+                        {payload.quantity ?? '—'}
                       </span>
                     </td>
                     <td className="px-4 py-4 text-right">
                       <span className="text-sm text-slate-300 font-mono">
-                        {payload.price ? `$${safeNumber(payload.price).toFixed(2)}` : 'Market'}
+                        {payload.price ? `$${safeNumber(payload.price).toFixed(2)}` : (payload.orderType || payload.type) === 'market' ? 'Market' : '—'}
                       </span>
                     </td>
                     <td className="px-4 py-4">
                       <span className="text-sm text-slate-300 font-mono">
-                        {payload.orderType || 'market'}
+                        {payload.orderType || payload.type || event.alpacaOrder?.type || 'Not submitted'}
                       </span>
                     </td>
                     <td className="px-4 py-4">
                       <span className={`inline-flex items-center px-2 py-1 rounded text-xs ${
-                        event.status === 'processed' || event.status === 'filled'
+                        event.status === 'processed' || event.status === 'filled' || event.status === 'completed' || event.status === 'closed'
                           ? 'bg-emerald-500/20 text-emerald-400'
-                          : event.status === 'error' || event.status === 'rejected'
+                          : event.status === 'error' || event.status === 'rejected' || event.status === 'needs_attention' || event.status === 'option_plan_rejected'
                           ? 'bg-rose-500/20 text-rose-400'
                           : event.status === 'blocked'
                           ? 'bg-orange-500/20 text-orange-400'

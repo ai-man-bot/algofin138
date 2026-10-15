@@ -3,7 +3,7 @@ import { brokersAPI, webhooksAPI } from '../utils/api';
 import { sendWebhookTest } from '../utils/webhookTest';
 import './OptionsOrderTicket.css';
 
-type Route = { id: string; name: string; status: string; url: string; broker_id: string; environment: string | null; connection_error?: string; strategyId?: string; auto_execute?: boolean };
+type Route = { id: string; name: string; status: string; url: string; broker_id: string; environment: string | null; connection_error?: string; strategyId?: string; auto_execute?: boolean; equity_order_quantity?: number | null };
 type Broker = { id: string; name?: string; connected: boolean; broker_type?: string; brokerType?: string; base_url?: string };
 const errorText = (error: unknown) => error instanceof Error ? error.message : 'Request failed';
 const field = 'option-ticket-field', button = 'option-ticket-button', panel = 'option-ticket-panel';
@@ -23,6 +23,7 @@ export function WebhooksPage() {
   const [brokerId, setBrokerId] = useState('');
   const [status, setStatus] = useState('active');
   const [autoExecute, setAutoExecute] = useState(false);
+  const [equityQuantity, setEquityQuantity] = useState('');
   const [previewRoute, setPreviewRoute] = useState<Route | null>(null);
   const [payload, setPayload] = useState(example);
   const [preview, setPreview] = useState<any>(null);
@@ -58,13 +59,16 @@ export function WebhooksPage() {
     setBrokerId(route === 'new' ? '' : route.broker_id);
     setStatus(route === 'new' ? 'active' : route.status);
     setAutoExecute(route === 'new' ? false : route.auto_execute === true);
+    setEquityQuantity(route === 'new' || route.equity_order_quantity == null ? '' : String(route.equity_order_quantity));
   }
   async function save(event: React.FormEvent) {
     event.preventDefault();
     if (!editor || !environment || mutation.current) return;
     mutation.current = true; setBusy(true); setError('');
     try {
-      const values = { name, broker_id: brokerId, environment, status, auto_execute: autoExecute };
+      // The server treats an omitted size as cleared, so always round-trip it.
+      const values = { name, broker_id: brokerId, environment, status, auto_execute: autoExecute,
+        equity_order_quantity: equityQuantity.trim() === '' ? null : Number(equityQuantity) };
       if (editor === 'new') await webhooksAPI.create(values); else await webhooksAPI.update(editor.id, values);
       setEditor(null); setNotice('Webhook saved. No order was placed.'); await load();
     } catch (error) { setError(errorText(error)); }
@@ -127,6 +131,9 @@ export function WebhooksPage() {
           <input type="checkbox" checked={autoExecute} onChange={event => setAutoExecute(event.target.checked)} className="h-4 w-4 accent-blue-500" />
         </label>
         <p className="mt-2">Risk-accepted signals on this route are submitted to the connected Alpaca account. Off by default; routes only record OMS orders.</p>
+        <label>Default equity share quantity<input className={field} type="number" min={1} max={100000} step={1} inputMode="numeric" placeholder="Not set: equity messages are not traded"
+          value={equityQuantity} onChange={event => setEquityQuantity(event.target.value)} /></label>
+        <p className="mt-2">Used for equity BTO messages (for example "PINS: BTO Buy to open at 30.10 ...") when auto-execute is on. The entry is a day limit order; the first target is recorded but not placed automatically.</p>
       </fieldset>
       <p>{environment ? `New signals will use this ${environment.toUpperCase()} account.` : 'Select a connected Alpaca account.'} Existing plans keep their original account. Deactivation does not cancel existing orders.</p>
       {editor !== 'new' && editor.strategyId && <p>Existing strategy association will be preserved.</p>}
@@ -134,7 +141,7 @@ export function WebhooksPage() {
     </form>}
     {!routes.length && !loading && <p>{loadError ? 'Webhook data unavailable.' : 'No webhooks yet. Create a route for the account that should receive your signals.'}</p>}
     {routes.map(route => <section key={route.id} className={panel} aria-label={route.name}>
-      <div className="flex justify-between"><h3 className="flex items-center gap-2">{route.name}{route.auto_execute && <span className="inline-flex items-center rounded bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-400">Auto-execute</span>}</h3><span>{route.status.toUpperCase()} · {route.environment?.toUpperCase() || 'ACCOUNT UNAVAILABLE'}</span></div>
+      <div className="flex justify-between"><h3 className="flex items-center gap-2">{route.name}{route.auto_execute && <span className="inline-flex items-center rounded bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-400">Auto-execute</span>}{route.auto_execute && route.equity_order_quantity ? <span className="inline-flex items-center rounded bg-blue-500/10 px-2 py-0.5 text-xs text-blue-400">Equity {route.equity_order_quantity} sh</span> : null}</h3><span>{route.status.toUpperCase()} · {route.environment?.toUpperCase() || 'ACCOUNT UNAVAILABLE'}</span></div>
       <p>Account: {route.broker_id || 'Not selected'}</p>
       {route.connection_error && <p role="alert">{route.connection_error}</p>}
       <label>Webhook URL<input className={`${field} font-mono`} readOnly value={route.url} onFocus={event => event.target.select()} /></label>
